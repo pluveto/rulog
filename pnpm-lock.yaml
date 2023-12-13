@@ -13,6 +13,9 @@ dependencies:
     version: 18.4.3
 
 devDependencies:
+  '@iarna/toml':
+    specifier: ^2.2.5
+    version: 2.2.5
   husky:
     specifier: ^8.0.0
     version: 8.0.3
@@ -208,6 +211,10 @@ packages:
   /@hutson/parse-repository-url@3.0.2:
     resolution: {integrity: sha512-H9XAx3hc0BQHY6l+IFSWHDySypcXsvsuLhgYLUGywmJ5pswRVQJUHpOsobnLYp2ZUaUlKiKDrgWWhosOwAEM8Q==}
     engines: {node: '>=6.9.0'}
+    dev: true
+
+  /@iarna/toml@2.2.5:
+    resolution: {integrity: sha512-trnsAYxU3xnS1gPHPyU961coFyLkh4gAD/0zQ5mymY4yOZ+CYvsPqUbOFSw0aDM4y0tV7tiFxL/1XfXPNC6IPg==}
     dev: true
 
   /@types/minimist@1.2.5:

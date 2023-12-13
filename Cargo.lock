@@ -4,11 +4,11 @@ version = 3
 
 [[package]]
 name = "rulog-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rulog-core",
 ]
 
 [[package]]
 name = "rulog-core"
-version = "0.1.0"
+version = "0.1.1"

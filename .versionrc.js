@@ -8,5 +8,9 @@ module.exports = {
             filename: './rulog-core/Cargo.toml',
             updater: './scripts/cargo-updater'
         },
+        {
+            filename: './package.json',
+            type: 'json'
+        }
     ],
 };

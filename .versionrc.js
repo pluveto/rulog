@@ -8,9 +8,5 @@ module.exports = {
             filename: './rulog-core/Cargo.toml',
             updater: './scripts/cargo-updater'
         },
-        {
-            filename: './Cargo.lock',
-            updater: './scripts/cargo-lock-updater.js'
-        }
     ],
 };

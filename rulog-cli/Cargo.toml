@@ -1,7 +1,11 @@
 [package]
 name = "rulog-cli"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 
-[dependencies.rulog-core]
-path = "../rulog-core"
+[dependencies]
+env_logger = "0.10.1"
+log = "0.4.20"
+
+  [dependencies.rulog-core]
+  path = "../rulog-core"

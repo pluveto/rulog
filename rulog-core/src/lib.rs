@@ -1,4 +1,5 @@
 pub mod lexer;
+pub mod parser;
 pub mod types;
 
 pub fn add(left: usize, right: usize) -> usize {

@@ -8,6 +8,7 @@ pub enum Token {
     Operator(String),  // Operators, such as +, -, *, /, <, =:=, etc.
     Cut,               // Cut operator (!).
     Comma,             // Comma (,), usually used to separate clauses.
+    Bar,               // Bar (|), used to separate choices.
     Period,            // Period (.), used to end a clause.
     Semicolon,         // Semicolon (;), used to represent choice.
     Colon,             // Colon (:), used for module qualifiers.

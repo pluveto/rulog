@@ -1,10 +1,5 @@
+use crate::types::error::LexerError;
 use crate::types::token::Token;
-
-#[derive(Debug, PartialEq)]
-pub enum LexerError {
-    UnexpectedCharacter(char),
-    InvalidNumberFormat(String),
-}
 
 pub struct Lexer<'a> {
     input: &'a str,
@@ -31,6 +26,7 @@ impl<'a> Lexer<'a> {
         } else {
             self.ch = self.input.chars().nth(self.next_position).unwrap();
         }
+        log::trace!("read char: {:?}", self.ch);
         self.position = self.next_position;
         self.next_position += 1;
     }
@@ -48,6 +44,7 @@ impl<'a> Lexer<'a> {
             '=' => Ok(Token::Operator("=".to_string())),
             '!' => Ok(Token::Cut),
             ',' => Ok(Token::Comma),
+            '|' => Ok(Token::Bar),
             '.' => Ok(Token::Period),
             ';' => Ok(Token::Semicolon),
             ':' => Ok(Token::Colon),
@@ -59,17 +56,29 @@ impl<'a> Lexer<'a> {
             '{' => Ok(Token::LeftCurlyBracket),
             '}' => Ok(Token::RightCurlyBracket),
             '\0' => Ok(Token::EndOfFile),
+            '\"' => {
+                let start_position = self.position + 1;
+                self.read_char();
+                while self.ch != '\"' {
+                    self.read_char();
+                }
+                let text = &self.input[start_position..self.position];
+                Ok(Token::String(text.to_string()))
+            }
             _ => {
-                if self.ch.is_alphabetic() || self.ch == '_' {
+                let ret = if self.ch.is_alphabetic() || self.ch == '_' {
                     Ok(self.read_identifier_or_variable())
                 } else if self.ch.is_digit(10) {
                     Ok(self.read_number())
                 } else {
                     Err(LexerError::UnexpectedCharacter(self.ch))
-                }
+                };
+                log::trace!("scanned token: {:?}", ret);
+                return ret;
             }
         };
 
+        log::trace!("scanned token: {:?}", token);
         self.read_char();
         token
     }
@@ -90,6 +99,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn read_number(&mut self) -> Token {
+        log::trace!("read number: {:?}", self.ch);
         let start_position = self.position;
         while self.ch.is_digit(10) {
             self.read_char();
@@ -130,6 +140,7 @@ impl<'a> Lexer<'a> {
 
     fn skip_whitespace(&mut self) {
         while self.ch.is_whitespace() {
+            log::trace!("skip whitespace: {:?}", self.ch);
             self.read_char();
         }
     }
@@ -139,6 +150,14 @@ mod tests {
     use crate::types::token::Token;
 
     use super::*;
+
+    fn setup_logger() {
+        use log::LevelFilter;
+        let _ = env_logger::builder()
+            .is_test(true)
+            .filter_level(LevelFilter::Trace)
+            .try_init();
+    }
 
     #[test]
     fn test_next_token() {
@@ -153,6 +172,32 @@ mod tests {
             lexer.next_token().unwrap(),
             Token::Variable("_Variable".to_string())
         );
+        assert_eq!(lexer.next_token().unwrap(), Token::EndOfFile);
+    }
+
+    #[test]
+    fn test_list_without_bracket() {
+        setup_logger();
+        let mut lexer = Lexer::new("1,2,3");
+        assert_eq!(lexer.next_token().unwrap(), Token::Integer(1));
+        assert_eq!(lexer.next_token().unwrap(), Token::Comma);
+        assert_eq!(lexer.next_token().unwrap(), Token::Integer(2));
+        assert_eq!(lexer.next_token().unwrap(), Token::Comma);
+        assert_eq!(lexer.next_token().unwrap(), Token::Integer(3));
+        assert_eq!(lexer.next_token().unwrap(), Token::EndOfFile);
+    }
+
+    #[test]
+    fn test_list() {
+        setup_logger();
+        let mut lexer = Lexer::new("[1, 2, 3]");
+        assert_eq!(lexer.next_token().unwrap(), Token::LeftBracket);
+        assert_eq!(lexer.next_token().unwrap(), Token::Integer(1));
+        assert_eq!(lexer.next_token().unwrap(), Token::Comma);
+        assert_eq!(lexer.next_token().unwrap(), Token::Integer(2));
+        assert_eq!(lexer.next_token().unwrap(), Token::Comma);
+        assert_eq!(lexer.next_token().unwrap(), Token::Integer(3));
+        assert_eq!(lexer.next_token().unwrap(), Token::RightBracket);
         assert_eq!(lexer.next_token().unwrap(), Token::EndOfFile);
     }
 }

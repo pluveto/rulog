@@ -7,8 +7,8 @@
     "test": "cargo test",
     "prepare": "husky install",
     "release": "standard-version",
-    "release:minor": "standard-version --release-as minor",
     "release:patch": "standard-version --release-as patch",
+    "release:minor": "standard-version --release-as minor",
     "release:major": "standard-version --release-as major"
   },
   "keywords": [],

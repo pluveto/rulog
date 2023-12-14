@@ -3,4 +3,5 @@
 members = [
     "rulog-core",
     "rulog-cli",
+    "rulog-vm",
 ]

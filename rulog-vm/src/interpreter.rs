@@ -1,92 +1,36 @@
 use rulog_core::{
     parser::parse,
-    types::ast::{Clause, Directive, OperatorDefinition, Predicate, Query, Term},
+    types::ast::{Clause, Directive, OperatorDefinition, Predicate, Query},
 };
 
 use std::collections::HashMap;
 
-#[derive(Debug, Clone)]
-pub struct Environment {
-    bindings: HashMap<String, Term>,
-}
-
-impl Environment {
-    pub fn new() -> Self {
-        Environment {
-            bindings: HashMap::new(),
-        }
-    }
-
-    pub fn bind(&mut self, var: String, term: Term) {
-        self.bindings.insert(var, term);
-    }
-
-    pub fn lookup(&self, var: &String) -> Option<&Term> {
-        self.bindings.get(var)
-    }
-}
-
-pub fn unify(term1: &Term, term2: &Term, env: &mut Environment) -> bool {
-    match (term1, term2) {
-        (Term::Variable(v), t) | (t, Term::Variable(v)) => {
-            if let Some(binding) = env.lookup(v) {
-                let binding = binding.clone();
-                return unify(&binding, t, env);
-            } else {
-                env.bind(v.clone(), t.clone());
-                return true;
-            }
-        }
-        (Term::Atom(a1), Term::Atom(a2)) if a1 == a2 => true,
-        (Term::Integer(i1), Term::Integer(i2)) if i1 == i2 => true,
-        (Term::Float(f1), Term::Float(f2)) if f1 == f2 => true,
-        (Term::String(s1), Term::String(s2)) if s1 == s2 => true,
-        (Term::List(l1), Term::List(l2)) if l1.len() == l2.len() => {
-            for (item1, item2) in l1.iter().zip(l2.iter()) {
-                if !unify(item1, item2, env) {
-                    return false;
-                }
-            }
-            true
-        }
-        (Term::Structure(name1, terms1), Term::Structure(name2, terms2))
-            if name1 == name2 && terms1.len() == terms2.len() =>
-        {
-            for (item1, item2) in terms1.iter().zip(terms2.iter()) {
-                if !unify(item1, item2, env) {
-                    return false;
-                }
-            }
-            true
-        }
-        _ => false,
-    }
-}
-
-#[derive(Debug)]
-pub enum InterpretingError {
-    ParseError(rulog_core::types::error::ParsingError),
-    UnsupportedDirective,
-    QueryFailed,
-}
-
-use std::collections::HashSet;
+use crate::{
+    resolver::{QuerySolution, QuerySolver},
+    types::InterpretingError,
+};
 
 pub struct Interpreter {
-    facts: HashSet<Predicate>,
-    rules: Vec<(Predicate, Vec<Predicate>)>,
+    clauses: Vec<(Predicate, Vec<Predicate>)>,
     operator_definitions: HashMap<String, OperatorDefinition>,
-    global_env: Environment,
+
+    on_solution: Option<Box<dyn Fn(&QuerySolution) -> bool>>,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
         Interpreter {
-            facts: HashSet::new(),
-            rules: Vec::new(),
+            clauses: Vec::new(),
             operator_definitions: HashMap::new(),
-            global_env: Environment::new(),
+            on_solution: None,
         }
+    }
+
+    pub fn on_solution<F>(&mut self, f: F)
+    where
+        F: Fn(&QuerySolution) -> bool + 'static,
+    {
+        self.on_solution = Some(Box::new(f));
     }
 
     pub fn eval(&mut self, input: &str) -> Result<(), InterpretingError> {
@@ -114,24 +58,34 @@ impl Interpreter {
                 self.operator_definitions
                     .insert(op_def.atom.clone(), op_def);
             }
-            _ => return Err(InterpretingError::UnsupportedDirective),
-        }
-        Ok(())
-    }
-
-    fn handle_query(&mut self, query: Query) -> Result<(), InterpretingError> {
-        log::trace!("handle query: {:?}", query);
-        for predicate in query.predicates {
-            if !self.solve_predicate(&predicate, &mut self.global_env.clone()) {
-                return Err(InterpretingError::QueryFailed);
+            Directive::Predicate(pred) => {
+                self.clauses.push((pred, Vec::new()));
             }
         }
         Ok(())
     }
 
+    fn handle_query(&mut self, query: Query) -> Result<(), InterpretingError> {
+        log::trace!("handle query resolved: {:?}", query);
+        let mut query_solver = QuerySolver::new(self.clauses.clone(), query);
+        if let Some(ref on_solution) = self.on_solution {
+            while let Some(solution) = query_solver.next() {
+                if !on_solution(&solution) {
+                    break;
+                }
+            }
+        } else {
+            for solution in query_solver {
+                println!("solution: {:?}", solution);
+            }
+        }
+
+        Ok(())
+    }
+
     fn handle_fact(&mut self, fact: Predicate) -> Result<(), InterpretingError> {
         log::trace!("handle fact: {:?}", fact);
-        self.facts.insert(fact);
+        self.clauses.push((fact, Vec::new()));
         Ok(())
     }
 
@@ -141,45 +95,8 @@ impl Interpreter {
         rule_body: Vec<Predicate>,
     ) -> Result<(), InterpretingError> {
         log::trace!("handle rule: {:?} :- {:?}", rule_head, rule_body);
-        self.rules.push((rule_head, rule_body));
+        self.clauses.push((rule_head, rule_body));
         Ok(())
-    }
-
-    fn solve_predicate(&self, pred: &Predicate, env: &mut Environment) -> bool {
-        log::trace!("solve predicate: {:?}", pred);
-        for fact in &self.facts {
-            if pred.name == fact.name && pred.terms.len() == fact.terms.len() {
-                let mut env_clone = env.clone();
-                if pred
-                    .terms
-                    .iter()
-                    .zip(&fact.terms)
-                    .all(|(t1, t2)| unify(t1, t2, &mut env_clone))
-                {
-                    *env = env_clone;
-                    return true;
-                }
-            }
-        }
-
-        for (head, body) in &self.rules {
-            if pred.name == head.name && pred.terms.len() == head.terms.len() {
-                let mut env_clone = env.clone();
-                if pred
-                    .terms
-                    .iter()
-                    .zip(&head.terms)
-                    .all(|(t1, t2)| unify(t1, t2, &mut env_clone))
-                {
-                    if body.iter().all(|p| self.solve_predicate(p, &mut env_clone)) {
-                        *env = env_clone;
-                        return true;
-                    }
-                }
-            }
-        }
-
-        false
     }
 }
 
@@ -207,13 +124,68 @@ mod tests {
     }
 
     #[test]
-    fn test_all_specs() {
+    fn test_parent_true() {
         setup_logger();
         let mut vm = Interpreter::new();
         let ret = vm.eval(
-            r#"parent(tom, liz).
-        ?- parent(tom, liz).
-        "#,
+            r#"
+                parent(tom, liz).
+                ?- parent(tom, liz).
+            "#,
+        );
+        assert!(ret.is_ok(), "{:?}", ret);
+    }
+
+    #[test]
+    fn test_parent_false() {
+        setup_logger();
+        let mut vm = Interpreter::new();
+        let ret = vm.eval(
+            r#"
+                parent(tom, liz).
+                ?- parent(liz, tom).
+            "#,
+        );
+        assert!(ret.is_ok(), "{:?}", ret);
+    }
+
+    #[test]
+    fn test_parent_var() {
+        setup_logger();
+        let mut vm = Interpreter::new();
+        let ret = vm.eval(
+            r#"
+                parent(tom, liz).
+                ?- parent(X, liz).
+            "#,
+        );
+        assert!(ret.is_ok(), "{:?}", ret);
+    }
+
+    #[test]
+    fn test_parent_var_multiple() {
+        setup_logger();
+        let mut vm = Interpreter::new();
+        let ret = vm.eval(
+            r#"
+                parent(tom, liz).
+                parent(tom, bob).
+                ?- parent(X, liz).
+            "#,
+        );
+        assert!(ret.is_ok(), "{:?}", ret);
+    }
+
+    #[test]
+    fn test_parent_var_multiple_children() {
+        setup_logger();
+        let mut vm = Interpreter::new();
+        let ret = vm.eval(
+            r#"
+                parent(tom, liz).
+                parent(tom, bob).
+                ?- parent(tom, X).
+            "#,
         );
         assert!(ret.is_ok(), "{:?}", ret);
     }

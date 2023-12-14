@@ -1,4 +1,7 @@
+pub mod environment;
 pub mod interpreter;
+pub mod resolver;
+pub mod types;
 
 pub fn add(left: usize, right: usize) -> usize {
     left + right

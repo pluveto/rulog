@@ -59,9 +59,13 @@ pub struct Predicate {
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum Clause {
+    /// A directive, such as `:- use_module(library(lists)).`
     Directive(Directive),
+    /// A query, such as `?- parent(X, a).`
     Query(Query),
+    /// A fact, such as `parent(a, b).`
     Fact(Predicate),
+    /// A rule, such as `parent(X, Y) :- father(X, Y).`
     Rule(Predicate, Vec<Predicate>),
 }
 

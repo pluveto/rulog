@@ -9,3 +9,6 @@ log = "0.4.20"
 
   [dependencies.rulog-core]
   path = "../rulog-core"
+
+  [dependencies.rulog-vm]
+  path = "../rulog-vm"

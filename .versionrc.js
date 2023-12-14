@@ -9,6 +9,10 @@ module.exports = {
             updater: './scripts/cargo-updater'
         },
         {
+            filename: './rulog-vm/Cargo.toml',
+            updater: './scripts/cargo-updater'
+        },
+        {
             filename: './package.json',
             type: 'json'
         }

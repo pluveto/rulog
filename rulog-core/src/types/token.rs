@@ -1,25 +1,48 @@
+/// A token is a lexical unit of a Prolog program.
 #[derive(PartialEq, Debug, Clone)]
 pub enum Token {
-    Atom(String),      // Atoms, such as foo, 'Bar', etc.
-    Variable(String),  // Variables, such as X, _Y, _, etc.
-    Integer(i64),      // Integers, such as 123, -456, etc.
-    Float(f64),        // Floating-point numbers, such as 1.23, -4.56e+7, etc.
-    String(String),    // Strings, such as "hello world".
-    Operator(String),  // Operators, such as +, -, *, /, <, =:=, etc.
-    Cut,               // Cut operator (!).
-    Comma,             // Comma (,), usually used to separate clauses.
-    Bar,               // Bar (|), used to separate choices.
-    Period,            // Period (.), used to end a clause.
-    Semicolon,         // Semicolon (;), used to represent choice.
-    Colon,             // Colon (:), used for module qualifiers.
-    ColonDash,         // Colon-dash (:-), used to separate rule heads and bodies.
-    QuestionMark,      // Question mark (?), used for queries.
-    LeftParenthesis,   // Left parenthesis (().
-    RightParenthesis,  // Right parenthesis ())).
-    LeftBracket,       // Left bracket ([).
-    RightBracket,      // Right bracket (]).
-    LeftCurlyBracket,  // Left curly bracket ({).
-    RightCurlyBracket, // Right curly bracket (}).
-    EndOfFile,         // End-of-file marker.
-    Comment,           // Comment, such as // this is a comment.
+    /// Atoms, such as foo, 'Bar', etc.
+    Atom(String),
+    /// Variables, such as X, _Y, _, etc.
+    Variable(String),
+    /// Integers, such as 123, -456, etc.
+    Integer(i64),
+    /// Floating-point numbers, such as 1.23, -4.56e+7, etc.
+    Float(f64),
+    /// Strings, such as "hello world".
+    String(String),
+    /// Operators, such as +, -, *, /, <, =:=, etc.
+    Operator(String),
+    /// Cut operator (!).
+    Cut,
+    /// Comma (,), usually used to separate clauses.
+    Comma,
+    /// Bar (|), used to separate choices.
+    Bar,
+    /// Period (.), used to end a clause.
+    Period,
+    /// Semicolon (;), used to represent choice.
+    Semicolon,
+    /// Colon (:), used for module qualifiers.
+    Colon,
+    /// Colon-dash (:-), used for directives.
+    ColonDash,
+    /// Question-dash (?-), used for queries.
+    QuestionDash,
+    /// Left parenthesis (().
+    LeftParenthesis,
+    /// Right parenthesis ())).
+    RightParenthesis,
+    /// Left bracket ([).
+    LeftBracket,
+    /// Right bracket (]).
+    RightBracket,
+    /// Left curly bracket ({).
+    LeftCurlyBracket,
+    /// Right curly bracket (}).
+    RightCurlyBracket,
+    /// End-of-file marker.
+    EndOfFile,
+    /// Comment, such as % this is a comment.
+    Comment,
 }

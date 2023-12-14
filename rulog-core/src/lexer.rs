@@ -31,6 +31,14 @@ impl<'a> Lexer<'a> {
         self.next_position += 1;
     }
 
+    fn peek_char(&self) -> char {
+        if self.next_position >= self.input.len() {
+            '\0'
+        } else {
+            self.input.chars().nth(self.next_position).unwrap()
+        }
+    }
+
     pub fn next_token(&mut self) -> Result<Token, LexerError> {
         self.skip_whitespace();
 
@@ -47,8 +55,6 @@ impl<'a> Lexer<'a> {
             '|' => Ok(Token::Bar),
             '.' => Ok(Token::Period),
             ';' => Ok(Token::Semicolon),
-            ':' => Ok(Token::Colon),
-            '?' => Ok(Token::QuestionMark),
             '(' => Ok(Token::LeftParenthesis),
             ')' => Ok(Token::RightParenthesis),
             '[' => Ok(Token::LeftBracket),
@@ -56,6 +62,22 @@ impl<'a> Lexer<'a> {
             '{' => Ok(Token::LeftCurlyBracket),
             '}' => Ok(Token::RightCurlyBracket),
             '\0' => Ok(Token::EndOfFile),
+            ':' => {
+                if self.peek_char() == '-' {
+                    self.read_char();
+                    Ok(Token::ColonDash)
+                } else {
+                    Ok(Token::Colon)
+                }
+            }
+            '?' => {
+                self.read_char();
+                if self.ch == '-' {
+                    Ok(Token::QuestionDash)
+                } else {
+                    Err(LexerError::UnexpectedCharacter(self.ch))
+                }
+            }
             '\"' => {
                 let start_position = self.position + 1;
                 self.read_char();
@@ -64,6 +86,21 @@ impl<'a> Lexer<'a> {
                 }
                 let text = &self.input[start_position..self.position];
                 Ok(Token::String(text.to_string()))
+            }
+            '\'' => {
+                let start_position = self.position + 1;
+                self.read_char();
+                while self.ch != '\'' {
+                    self.read_char();
+                }
+                let text = &self.input[start_position..self.position];
+                Ok(Token::Atom(text.to_string()))
+            }
+            '%' => {
+                while self.ch != '\n' && self.ch != '\0' {
+                    self.read_char();
+                }
+                return self.next_token();
             }
             _ => {
                 let ret = if self.ch.is_alphabetic() || self.ch == '_' {
@@ -198,6 +235,15 @@ mod tests {
         assert_eq!(lexer.next_token().unwrap(), Token::Comma);
         assert_eq!(lexer.next_token().unwrap(), Token::Integer(3));
         assert_eq!(lexer.next_token().unwrap(), Token::RightBracket);
+        assert_eq!(lexer.next_token().unwrap(), Token::EndOfFile);
+    }
+
+    #[test]
+    fn test_comment() {
+        setup_logger();
+        let mut lexer = Lexer::new("% comment\natom.");
+        assert_eq!(lexer.next_token().unwrap(), Token::Atom("atom".to_string()));
+        assert_eq!(lexer.next_token().unwrap(), Token::Period);
         assert_eq!(lexer.next_token().unwrap(), Token::EndOfFile);
     }
 }

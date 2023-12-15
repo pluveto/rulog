@@ -1,7 +1,8 @@
 [workspace]
 
 members = [
-    "rulog-core",
-    "rulog-cli",
-    "rulog-vm",
+    "rulog_core",
+    "rulog_cli",
+    "rulog_vm",
+    "rulog_test_util",
 ]

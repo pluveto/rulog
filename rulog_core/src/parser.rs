@@ -293,14 +293,7 @@ mod tests {
     use crate::types::ast::Float;
 
     use super::*;
-
-    fn setup_logger() {
-        use log::LevelFilter;
-        let _ = env_logger::builder()
-            .is_test(true)
-            .filter_level(LevelFilter::Trace)
-            .try_init();
-    }
+    use rulog_test_util::setup_logger;
 
     //===------------------------------------------------------------------===//
     // Sub-parser tests

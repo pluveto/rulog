@@ -17,6 +17,8 @@ pub struct QuerySolver {
     /// Choice points for backtracking
     /// which stores the index of the query and the environment at that point
     choice_points: Vec<(usize, Environment)>,
+    /// Current rule index for each predicate
+    current_rule_indices: Vec<usize>,
     /// Current index in the query
     current_index: usize,
     /// for debugging or delecting infinite loops
@@ -26,6 +28,7 @@ pub struct QuerySolver {
 
 impl QuerySolver {
     pub fn new(rules_or_facts: Vec<(Predicate, Vec<Predicate>)>, query: Query) -> Self {
+        let len = query.predicates.len();
         QuerySolver {
             rules: rules_or_facts,
             query,
@@ -33,6 +36,7 @@ impl QuerySolver {
             env_stack: vec![Environment::new()],
             choice_points: Vec::new(),
             current_index: 0,
+            current_rule_indices: vec![0; len],
             __iteration_counter: 0,
             __iteration_counter_threshold: std::usize::MAX / 2,
         }
@@ -47,77 +51,105 @@ impl Iterator for QuerySolver {
     type Item = QuerySolution;
 
     fn next(&mut self) -> Option<Self::Item> {
-        log::trace!("{}", "find next solution".green());
-        while self.current_index < self.query.predicates.len() {
+        log::trace!(
+            "{action}, current_index: {current_index}, env_stack: {env_stack:?}, choice_points: {choice_points:?}",
+            action = "find next solution".green(),
+            current_index = self.current_index,
+            env_stack = self.env_stack,
+            choice_points = self.choice_points
+        );
+        while let Some(env) = self.env_stack.last().cloned() {
             log::trace!(
-                "current_index: {}, query: {:?}",
-                self.current_index,
-                self.query
+                "get env from stack: {env:?}, current_index: {current_index}",
+                env = env,
+                current_index = self.current_index
             );
-            self.__iteration_counter += 1;
-            if self.__iteration_counter > self.__iteration_counter_threshold {
-                panic!("too many iterations");
+
+            if self.current_index >= self.query.predicates.len() {
+                // A solution is found, return it
+                log::trace!(
+                    "got {solution_s} {env:?}",
+                    solution_s = "solution".green(),
+                    env = env
+                );
+                return Some(QuerySolution { env: env.clone() });
             }
 
             let predicate = &self.query.predicates[self.current_index];
-            let mut env = self.env_stack.pop().unwrap_or_default();
 
             // Attempt to unify the predicate with a rule or fact
-            for (head, body) in &self.rules {
-                if let Some(new_env) = unify_predicate(&predicate, head) {
-                    // Apply the current environment to the body of the rule
-                    let body_with_env = body
-                        .iter()
-                        .map(|p| apply_env_predicate(p, &env))
-                        .collect::<Vec<_>>();
-                    // Save the current choice point for backtracking
-                    self.choice_points.push((self.current_index, env.clone()));
-                    log::trace!(
-                        "unify {} {:?} {} {:?}; new index {:?}; {} {:?}",
-                        "goal".blue(),
-                        predicate,
-                        "clause".blue(),
-                        (head, body),
-                        self.current_index,
-                        "env".blue(),
-                        env
-                    );
-                    // Update the environment with the new
-                    env = compose(&env, &new_env);
-                    // If the rule has a body, add it to the query stack
-                    if !body_with_env.is_empty() {
+            let start_rule_index = self.current_rule_indices[self.current_index];
+            let mut rule_found = false;
+            for i in start_rule_index..self.rules.len() {
+                print!("current rule index: {}", i);
+                let (head, body) = &self.rules[i];
+
+                if let Some(new_env) = unify_predicate_with_env(predicate, head, &env) {
+                    rule_found = true;
+                    // Save the next rule index to try if backtracking
+                    self.current_rule_indices[self.current_index] = i + 1;
+
+                    // If the rule has a body, we need to solve it as well
+                    if !body.is_empty() {
+                        let body_with_env = body
+                            .iter()
+                            .map(|p| apply_env_predicate(p, &new_env))
+                            .collect::<Vec<_>>();
+                        self.choice_points.push((self.current_index, env.clone()));
+                        self.env_stack.push(new_env);
                         self.query.predicates.splice(
                             self.current_index..self.current_index,
                             body_with_env.iter().cloned(),
                         );
+                        self.current_index += 1;
+                        log::trace!(
+                            "index updated to {current_index}, {choice_points:?}",
+                            current_index = self.current_index,
+                            choice_points = self.choice_points
+                        );
+                        break;
+                    } else {
+                        // If the rule has no body, we found a solution
+                        log::trace!(
+                            "got {solution_s} {env:?}",
+                            solution_s = "solution".green(),
+                            env = new_env
+                        );
+
+                        return Some(QuerySolution { env: new_env });
                     }
-                    self.env_stack.push(env);
-                    self.current_index += 1;
-                    break;
                 }
             }
-
-            // Backtrack if no rule or fact is found
-            if self.env_stack.is_empty() {
+            if !rule_found {
+                // If no rule is found, then we backtrack
+                self.env_stack.pop();
+                // If no rule or fact is found, backtrack
                 if let Some((index, saved_env)) = self.choice_points.pop() {
+                    // Reset the rule index for the current predicate
+                    self.current_rule_indices[self.current_index] = 0;
                     self.env_stack.push(saved_env);
                     self.current_index = index;
+                    log::trace!(
+                        "index updated to {current_index}, {choice_points:?}",
+                        current_index = self.current_index,
+                        choice_points = self.choice_points
+                    );
+                    // Remove the failed predicate and continue from the choice point
+                    self.query
+                        .predicates
+                        .drain(self.current_index..self.current_index + 1);
                 } else {
-                    return None; // No more solutions
+                    // If backtracking is not possible, no more solutions
+                    return None;
                 }
             }
         }
 
-        // Extract the solution from the environment stack
-        let solution = self.env_stack.pop().map(|env| QuerySolution { env });
-        log::trace!(
-            "got {solution_s}  {solution:?}",
-            solution_s = "solution".green(),
-            solution = solution
-        );
-        solution
+        // If the environment stack is empty, there are no more solutions
+        None
     }
 }
+
 // You would need to implement the `compose`, `apply_env`, `apply_env_terms`, `unify`, `unify_terms`, and `unify_helper` functions as per your logic.
 
 // pub struct QuerySolver {
@@ -328,6 +360,44 @@ fn unify_predicate(predicate1: &Predicate, predicate2: &Predicate) -> Option<Env
     unify_terms(&predicate1.terms, &predicate2.terms)
 }
 
+fn unify_predicate_with_env(
+    predicate1: &Predicate,
+    predicate2: &Predicate,
+    env: &Environment,
+) -> Option<Environment> {
+    if predicate1.name != predicate2.name {
+        return None;
+    }
+    unify_terms_with_env(&predicate1.terms, &predicate2.terms, env)
+}
+
+fn unify_terms_with_env(
+    terms1: &[Term],
+    terms2: &[Term],
+    env: &Environment,
+) -> Option<Environment> {
+    log::trace!(
+        "unify terms {:?} and {:?} with env {:?}",
+        terms1,
+        terms2,
+        env
+    );
+    if terms1.len() != terms2.len() {
+        log::trace!("skip because of length mismatch");
+        return None;
+    }
+
+    let mut env = env.clone();
+    for (term1, term2) in terms1.iter().zip(terms2.iter()) {
+        if !unify_helper(term1, term2, &mut env) {
+            log::trace!("unification failure for {:?} and {:?}", term1, term2);
+            return None;
+        }
+    }
+    log::trace!("unification success,  {:?}", env);
+    Some(env)
+}
+
 // attempts to unify two lists of terms by recursively comparing corresponding
 // terms and building an Environment object to store variable
 // If unification succeeds, it returns the Environment object; otherwise, it returns None.
@@ -359,15 +429,41 @@ fn unify_helper(term1: &Term, term2: &Term, env: &mut Environment) -> bool {
         (Term::String(s1), Term::String(s2)) if s1 == s2 => true,
         (Term::Variable(_), Term::Variable(_)) => true,
         // if one of the terms is a variable, bind it to the other term
-        (Term::Variable(v), t) | (t, Term::Variable(v)) => {
-            // if the variable is already bound, unify the bound term with the other term
-            if let Some(binding) = env.get(v) {
-                let binding = binding.clone();
-                return unify_helper(&binding, t, env);
+        // (Term::Variable(v), t) | (t, Term::Variable(v)) => {
+        //     // if the variable is already bound, unify the bound term with the other term
+        //     if let Some(existing_binding) = env.get(v) {
+        //         if (existing_binding != t) {
+        //             return false; // conflict
+        //         }
+        //         return true;
+        //         // let binding = existing_binding.clone();
+        //         // return unify_helper(&binding, t, env);
+        //     } else {
+        //         env.insert(v.clone(), t.clone());
+        //         return true;
+        //     }
+        // }
+        (Term::Variable(name), term) => {
+            if let Some(existing_binding) = env.get(name) {
+                if existing_binding != term {
+                    return false; // Conflict in bindings
+                }
             } else {
-                env.insert(v.clone(), t.clone());
-                return true;
+                env.insert(name.clone(), term.clone());
             }
+
+            true
+        }
+        (term, Term::Variable(name)) => {
+            if let Some(existing_binding) = env.get(name) {
+                if existing_binding != term {
+                    return false; // Conflict in bindings
+                }
+            } else {
+                env.insert(name.clone(), term.clone());
+            }
+
+            true
         }
         // if both terms are lists and have the same length, unify the pairs of items
         (Term::List(l1), Term::List(l2)) if l1.len() == l2.len() => {
@@ -465,7 +561,8 @@ mod test {
     }
 
     #[test]
-    fn test_query_solver() {
+    fn test_query_solver_two_parents() {
+        setup_logger();
         /*
            parent(tom, liz).
            parent(tom, bob).

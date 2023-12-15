@@ -1,0 +1,8 @@
+[package]
+name = "rulog_test_util"
+version = "0.1.2"
+edition = "2021"
+
+[dependencies]
+env_logger = "0.10.1"
+log = "0.4.20"

@@ -103,25 +103,7 @@ impl Interpreter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-
-    fn setup_logger() {
-        use log::LevelFilter;
-        let _ = env_logger::builder()
-            .is_test(true)
-            .format(|buf, record| {
-                writeln!(
-                    buf,
-                    "{}:{} \t[{}] - {}",
-                    record.file().unwrap_or("unknown"),
-                    record.line().unwrap_or(0),
-                    record.level(),
-                    record.args()
-                )
-            })
-            .filter_level(LevelFilter::Trace)
-            .try_init();
-    }
+    use rulog_test_util::setup_logger;
 
     #[test]
     fn test_parent_true() {

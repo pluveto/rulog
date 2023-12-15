@@ -1,0 +1,10 @@
+[package]
+name = "rulog_core"
+version = "0.1.2"
+edition = "2021"
+
+[dependencies]
+env_logger = "0.10.1"
+log = "0.4.20"
+backtrace = "0.3"
+rulog_test_util = { path = "../rulog_test_util" }

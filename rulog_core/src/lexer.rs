@@ -184,17 +184,9 @@ impl<'a> Lexer<'a> {
 }
 #[cfg(test)]
 mod tests {
-    use crate::types::token::Token;
-
     use super::*;
-
-    fn setup_logger() {
-        use log::LevelFilter;
-        let _ = env_logger::builder()
-            .is_test(true)
-            .filter_level(LevelFilter::Trace)
-            .try_init();
-    }
+    use crate::types::token::Token;
+    use rulog_test_util::setup_logger;
 
     #[test]
     fn test_next_token() {

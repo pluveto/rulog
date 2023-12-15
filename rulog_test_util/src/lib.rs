@@ -7,7 +7,7 @@ pub fn setup_logger() {
         .format(|buf, record| {
             writeln!(
                 buf,
-                "[{}] {}:{} \t - {}",
+                "[{}] {}:{}\n{}\n",
                 record.level(),
                 record.file().unwrap_or("unknown"),
                 record.line().unwrap_or(0),

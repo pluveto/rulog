@@ -9,15 +9,9 @@ pub fn add(left: usize, right: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use rulog_test_util::setup_logger;
 
-    fn setup_logger() {
-        use log::LevelFilter;
-        let _ = env_logger::builder()
-            .is_test(true)
-            .filter_level(LevelFilter::Trace)
-            .try_init();
-    }
+    use super::*;
 
     fn load_specs() -> std::io::Result<Vec<String>> {
         use std::fs;

@@ -48,4 +48,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Acknowledgments
 
-TODO
+- <https://yuuuuang.com/2019/04/06/%E5%AD%A6%E4%B9%A0%E7%AC%94%E8%AE%B0-SLD-Resolution/>
+- <https://www.cs.cmu.edu/~fp/courses/atp/handouts/atp.pdf>
+- <https://tinman.cs.gsu.edu/~raj/8710/f02/ch3.pdf>

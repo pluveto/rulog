@@ -46,98 +46,79 @@ impl QuerySolver {
         self.__iteration_counter_threshold = threshold;
     }
 }
-
 impl Iterator for QuerySolver {
     type Item = QuerySolution;
 
     fn next(&mut self) -> Option<Self::Item> {
-        log::trace!(
-            "{action}, current_index: {current_index}, env_stack: {env_stack:?}, choice_points: {choice_points:?}",
-            action = "find next solution".green(),
-            current_index = self.current_index,
-            env_stack = self.env_stack,
-            choice_points = self.choice_points
-        );
+        // ... (other parts of the method remain unchanged)
+
         while let Some(env) = self.env_stack.last().cloned() {
-            log::trace!(
-                "get env from stack: {env:?}, current_index: {current_index}",
-                env = env,
-                current_index = self.current_index
-            );
-
-            if self.current_index >= self.query.predicates.len() {
-                // A solution is found, return it
-                log::trace!(
-                    "got {solution_s} {env:?}",
-                    solution_s = "solution".green(),
-                    env = env
-                );
-                return Some(QuerySolution { env: env.clone() });
-            }
-
             let predicate = &self.query.predicates[self.current_index];
 
-            // Attempt to unify the predicate with a rule or fact
-            let start_rule_index = self.current_rule_indices[self.current_index];
+            // Check if there are more rules to try for the current predicate
+            let start_rule_index = *self
+                .current_rule_indices
+                .get(self.current_index)
+                .unwrap_or(&0);
             let mut rule_found = false;
             for i in start_rule_index..self.rules.len() {
-                print!("current rule index: {}", i);
                 let (head, body) = &self.rules[i];
 
                 if let Some(new_env) = unify_predicate_with_env(predicate, head, &env) {
+                    // A rule has been found, so we don't need to backtrack yet
                     rule_found = true;
                     // Save the next rule index to try if backtracking
-                    self.current_rule_indices[self.current_index] = i + 1;
+                    if self.current_index < self.current_rule_indices.len() {
+                        self.current_rule_indices[self.current_index] = i + 1;
+                    }
 
-                    // If the rule has a body, we need to solve it as well
                     if !body.is_empty() {
+                        // Splice in the body of the rule
                         let body_with_env = body
                             .iter()
                             .map(|p| apply_env_predicate(p, &new_env))
                             .collect::<Vec<_>>();
-                        self.choice_points.push((self.current_index, env.clone()));
-                        self.env_stack.push(new_env);
+
+                        // Insert default rule indices for the new predicates
+                        self.current_rule_indices.splice(
+                            self.current_index..self.current_index,
+                            std::iter::repeat(0).take(body_with_env.len()),
+                        );
+
+                        // Now splice in the predicates
                         self.query.predicates.splice(
                             self.current_index..self.current_index,
                             body_with_env.iter().cloned(),
                         );
+
+                        self.choice_points.push((self.current_index, env.clone()));
+                        self.env_stack.push(new_env);
                         self.current_index += 1;
-                        log::trace!(
-                            "index updated to {current_index}, {choice_points:?}",
-                            current_index = self.current_index,
-                            choice_points = self.choice_points
-                        );
-                        break;
                     } else {
                         // If the rule has no body, we found a solution
-                        log::trace!(
-                            "got {solution_s} {env:?}",
-                            solution_s = "solution".green(),
-                            env = new_env
-                        );
-
                         return Some(QuerySolution { env: new_env });
                     }
+
+                    break; // Break out of the for loop since we've found a rule
                 }
             }
+
             if !rule_found {
                 // If no rule is found, then we backtrack
-                self.env_stack.pop();
-                // If no rule or fact is found, backtrack
+                self.env_stack.pop(); // Now we can safely pop the environment
                 if let Some((index, saved_env)) = self.choice_points.pop() {
                     // Reset the rule index for the current predicate
-                    self.current_rule_indices[self.current_index] = 0;
-                    self.env_stack.push(saved_env);
+                    if self.current_index < self.current_rule_indices.len() {
+                        self.current_rule_indices[self.current_index] = 0;
+                    }
                     self.current_index = index;
-                    log::trace!(
-                        "index updated to {current_index}, {choice_points:?}",
-                        current_index = self.current_index,
-                        choice_points = self.choice_points
-                    );
                     // Remove the failed predicate and continue from the choice point
                     self.query
                         .predicates
                         .drain(self.current_index..self.current_index + 1);
+                    // Also remove the corresponding rule index entry
+                    self.current_rule_indices.remove(self.current_index);
+                    self.env_stack.push(saved_env);
                 } else {
                     // If backtracking is not possible, no more solutions
                     return None;

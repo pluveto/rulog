@@ -9,43 +9,32 @@ use crate::{
     resolver::{QuerySolution, QuerySolver},
     types::InterpretingError,
 };
+pub trait SolutionHandler {
+    fn handle_solution(&self, solution: Option<&QuerySolution>) -> bool;
+}
 
+#[derive(Default)]
 pub struct Interpreter {
     clauses: Vec<(Predicate, Vec<Predicate>)>,
     operator_definitions: HashMap<String, OperatorDefinition>,
-
-    on_solution: Option<Box<dyn Fn(&QuerySolution) -> bool>>,
 }
 
 impl Interpreter {
-    pub fn new() -> Self {
-        Interpreter {
-            clauses: Vec::new(),
-            operator_definitions: HashMap::new(),
-            on_solution: None,
-        }
-    }
-
-    pub fn on_solution<F>(&mut self, f: F)
-    where
-        F: Fn(&QuerySolution) -> bool + 'static,
-    {
-        self.on_solution = Some(Box::new(f));
-    }
-
-    pub fn eval(&mut self, input: &str) -> Result<(), InterpretingError> {
+    pub fn eval(
+        &mut self,
+        input: &str,
+        handler: Option<&dyn SolutionHandler>,
+    ) -> Result<(), InterpretingError> {
         let program = parse(input).map_err(InterpretingError::ParseError)?;
         for clause in program.0 {
             let ret = match clause {
                 Clause::Directive(directive) => self.handle_directive(directive),
-                Clause::Query(query) => self.handle_query(query),
+                Clause::Query(query) => self.handle_query(query, handler),
                 Clause::Fact(fact) => self.handle_fact(fact),
                 Clause::Rule(rule_head, rule_body) => self.handle_rule(rule_head, rule_body),
             };
 
-            if let Err(e) = ret {
-                return Err(e);
-            }
+            ret?
         }
 
         Ok(())
@@ -65,19 +54,25 @@ impl Interpreter {
         Ok(())
     }
 
-    fn handle_query(&mut self, query: Query) -> Result<(), InterpretingError> {
-        log::trace!("handle query resolved: {:?}", query);
-        let mut query_solver = QuerySolver::new(self.clauses.clone(), query);
-        if let Some(ref on_solution) = self.on_solution {
-            while let Some(solution) = query_solver.next() {
-                if !on_solution(&solution) {
-                    break;
-                }
+    fn handle_query(
+        &mut self,
+        query: Query,
+        handler: Option<&dyn SolutionHandler>,
+    ) -> Result<(), InterpretingError> {
+        log::trace!("handle query: {:?}", query);
+        let handler = handler.unwrap_or(&PrintSolutionHandler);
+        let query_solver = QuerySolver::new(self.clauses.clone(), query);
+
+        let mut has_solution = false;
+        for solution in query_solver {
+            has_solution = true;
+            if !handler.handle_solution(Some(&solution)) {
+                break;
             }
-        } else {
-            for solution in query_solver {
-                println!("solution: {:?}", solution);
-            }
+        }
+
+        if !has_solution {
+            handler.handle_solution(None);
         }
 
         Ok(())
@@ -100,20 +95,69 @@ impl Interpreter {
     }
 }
 
+pub struct PrintSolutionHandler;
+
+impl SolutionHandler for PrintSolutionHandler {
+    fn handle_solution(&self, solution: Option<&QuerySolution>) -> bool {
+        println!("solution: {:?}", solution);
+        true // Continue processing
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+
+    use crate::environment::Environment;
+
     use super::*;
+    use rulog_core::types::ast::Term;
     use rulog_test_util::setup_logger;
+    struct TestSolutionHandler {
+        expected_solutions: Vec<Option<QuerySolution>>,
+        index: RefCell<usize>,
+    }
+
+    impl TestSolutionHandler {
+        fn new(expected_solutions: Vec<Option<QuerySolution>>) -> Self {
+            Self {
+                expected_solutions,
+                index: RefCell::new(0),
+            }
+        }
+    }
+
+    impl SolutionHandler for TestSolutionHandler {
+        fn handle_solution(&self, solution: Option<&QuerySolution>) -> bool {
+            let size = self.index.borrow().clone();
+            if size < self.expected_solutions.len() {
+                assert_eq!(
+                    solution,
+                    self.expected_solutions[size].as_ref(),
+                    "expected solution: {:?}, actual solution: {:?}",
+                    self.expected_solutions[size],
+                    solution
+                );
+                self.index.replace(size + 1);
+                true
+            } else {
+                false
+            }
+        }
+    }
 
     #[test]
     fn test_parent_true() {
         setup_logger();
-        let mut vm = Interpreter::new();
+        let mut vm = Interpreter::default();
         let ret = vm.eval(
             r#"
                 parent(tom, liz).
                 ?- parent(tom, liz).
             "#,
+            Some(&TestSolutionHandler::new(vec![Some(
+                QuerySolution::default(),
+            )])),
         );
         assert!(ret.is_ok(), "{:?}", ret);
     }
@@ -121,12 +165,17 @@ mod tests {
     #[test]
     fn test_parent_false() {
         setup_logger();
-        let mut vm = Interpreter::new();
+        let mut vm = Interpreter::default();
         let ret = vm.eval(
             r#"
                 parent(tom, liz).
                 ?- parent(liz, tom).
+                ?- parent(tom, liz).
             "#,
+            Some(&TestSolutionHandler::new(vec![
+                None,
+                Some(QuerySolution::default()),
+            ])),
         );
         assert!(ret.is_ok(), "{:?}", ret);
     }
@@ -134,12 +183,15 @@ mod tests {
     #[test]
     fn test_parent_var() {
         setup_logger();
-        let mut vm = Interpreter::new();
+        let mut vm = Interpreter::default();
         let ret = vm.eval(
             r#"
                 parent(tom, liz).
                 ?- parent(X, liz).
             "#,
+            Some(&TestSolutionHandler::new(vec![Some(QuerySolution {
+                env: Environment::default().extend("X".to_string(), Term::Atom("tom".to_string())),
+            })])),
         );
         assert!(ret.is_ok(), "{:?}", ret);
     }
@@ -147,13 +199,16 @@ mod tests {
     #[test]
     fn test_parent_var_multiple() {
         setup_logger();
-        let mut vm = Interpreter::new();
+        let mut vm = Interpreter::default();
         let ret = vm.eval(
             r#"
                 parent(tom, liz).
                 parent(tom, bob).
                 ?- parent(X, liz).
             "#,
+            Some(&TestSolutionHandler::new(vec![Some(QuerySolution {
+                env: Environment::default().extend("X".to_string(), Term::Atom("tom".to_string())),
+            })])),
         );
         assert!(ret.is_ok(), "{:?}", ret);
     }
@@ -161,13 +216,18 @@ mod tests {
     #[test]
     fn test_parent_var_multiple_children() {
         setup_logger();
-        let mut vm = Interpreter::new();
+        let mut vm = Interpreter::default();
         let ret = vm.eval(
             r#"
                 parent(tom, liz).
                 parent(tom, bob).
                 ?- parent(tom, X).
             "#,
+            Some(&TestSolutionHandler::new(vec![Some(QuerySolution {
+                env: Environment::default()
+                    .extend("X".to_string(), Term::Atom("bob".to_string()))
+                    .extend("X".to_string(), Term::Atom("liz".to_string())),
+            })])),
         );
         assert!(ret.is_ok(), "{:?}", ret);
     }

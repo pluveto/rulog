@@ -7,7 +7,6 @@ pub struct QuerySolution {
     pub env: Environment,
 }
 
-
 pub struct QuerySolver {
     pub query: Query,
     pub clauses: Vec<(Predicate, Vec<Predicate>)>,
@@ -74,7 +73,7 @@ impl QuerySolver {
         // Attempt unification of the terms of the goal and the clause.
         if let Some(new_env) = unify_terms(&goal.terms, &clause.0.terms) {
             // Compose the new environment with the existing one.
-            let new_env = compose(&env, &new_env);
+            let new_env = compose(env, &new_env);
 
             // If the clause has a body, we need to expand the state with the new sub-goals.
             if !clause.1.is_empty() {
@@ -387,10 +386,10 @@ fn unify_helper(term1: &Term, term2: &Term, env: &mut Environment) -> bool {
             // if the variable is already bound, unify the bound term with the other term
             if let Some(binding) = env.lookup(v) {
                 let binding = binding.clone();
-                return unify_helper(&binding, t, env);
+                unify_helper(&binding, t, env)
             } else {
                 env.bind(v.clone(), t.clone());
-                return true;
+                true
             }
         }
         // if both terms are lists and have the same length, unify the pairs of items

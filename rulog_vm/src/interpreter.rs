@@ -13,19 +13,13 @@ pub trait SolutionHandler {
     fn handle_solution(&self, solution: Option<&QuerySolution>) -> bool;
 }
 
+#[derive(Default)]
 pub struct Interpreter {
     clauses: Vec<(Predicate, Vec<Predicate>)>,
     operator_definitions: HashMap<String, OperatorDefinition>,
 }
 
 impl Interpreter {
-    pub fn new() -> Self {
-        Interpreter {
-            clauses: Vec::new(),
-            operator_definitions: HashMap::new(),
-        }
-    }
-
     pub fn eval(
         &mut self,
         input: &str,
@@ -40,9 +34,7 @@ impl Interpreter {
                 Clause::Rule(rule_head, rule_body) => self.handle_rule(rule_head, rule_body),
             };
 
-            if let Err(e) = ret {
-                return Err(e);
-            }
+            ret?
         }
 
         Ok(())
@@ -72,7 +64,7 @@ impl Interpreter {
         let mut query_solver = QuerySolver::new(self.clauses.clone(), query);
 
         let mut has_solution = false;
-        while let Some(solution) = query_solver.next() {
+        for solution in query_solver {
             has_solution = true;
             if !handler.handle_solution(Some(&solution)) {
                 break;
@@ -157,7 +149,7 @@ mod tests {
     #[test]
     fn test_parent_true() {
         setup_logger();
-        let mut vm = Interpreter::new();
+        let mut vm = Interpreter::default();
         let ret = vm.eval(
             r#"
                 parent(tom, liz).
@@ -173,7 +165,7 @@ mod tests {
     #[test]
     fn test_parent_false() {
         setup_logger();
-        let mut vm = Interpreter::new();
+        let mut vm = Interpreter::default();
         let ret = vm.eval(
             r#"
                 parent(tom, liz).
@@ -191,7 +183,7 @@ mod tests {
     #[test]
     fn test_parent_var() {
         setup_logger();
-        let mut vm = Interpreter::new();
+        let mut vm = Interpreter::default();
         let ret = vm.eval(
             r#"
                 parent(tom, liz).
@@ -207,7 +199,7 @@ mod tests {
     #[test]
     fn test_parent_var_multiple() {
         setup_logger();
-        let mut vm = Interpreter::new();
+        let mut vm = Interpreter::default();
         let ret = vm.eval(
             r#"
                 parent(tom, liz).
@@ -224,7 +216,7 @@ mod tests {
     #[test]
     fn test_parent_var_multiple_children() {
         setup_logger();
-        let mut vm = Interpreter::new();
+        let mut vm = Interpreter::default();
         let ret = vm.eval(
             r#"
                 parent(tom, liz).

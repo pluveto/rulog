@@ -2,10 +2,11 @@ use rulog_core::types::ast::{Predicate, Query, Term};
 
 use crate::environment::Environment;
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct QuerySolution {
     pub env: Environment,
 }
+
 
 pub struct QuerySolver {
     pub query: Query,
@@ -19,7 +20,7 @@ impl QuerySolver {
         let initial_state = query
             .predicates
             .iter()
-            .map(|predicate| (predicate.clone(), Environment::new()))
+            .map(|predicate| (predicate.clone(), Environment::default()))
             .collect();
 
         QuerySolver {
@@ -65,7 +66,7 @@ impl QuerySolver {
         env: &Environment,
         clause: &(Predicate, Vec<Predicate>),
     ) -> Option<Environment> {
-        // First, check if the goal can be unified with the head of the clause.
+        // Check if the goal can be unified with the head of the clause.
         if goal.name != clause.0.name {
             return None;
         }
@@ -96,6 +97,11 @@ impl QuerySolver {
             return Some(new_env);
         }
 
+        // If goal and clause head match exactly, return the current environment.
+        if goal == &clause.0 {
+            return Some(env.clone());
+        }
+
         None
     }
 }
@@ -121,9 +127,56 @@ fn test_query_solver_no_var() {
     assert_eq!(
         next_solution,
         Some(QuerySolution {
-            env: Environment::new()
+            env: Environment::default()
         })
     );
+    assert_eq!(query_solver.next(), None);
+}
+
+#[test]
+fn test_query_solver_no_var_true() {
+    let rules = vec![(
+        Predicate {
+            name: "parent".to_string(),
+            terms: vec![Term::Atom("tom".to_string()), Term::Atom("liz".to_string())],
+        },
+        vec![],
+    )];
+    let query = Query {
+        predicates: vec![Predicate {
+            name: "parent".to_string(),
+            terms: vec![Term::Atom("tom".to_string()), Term::Atom("liz".to_string())],
+        }],
+    };
+
+    let mut query_solver = QuerySolver::new(rules, query);
+    let next_solution = query_solver.next();
+    assert_eq!(
+        next_solution,
+        Some(QuerySolution {
+            env: Environment::default()
+        })
+    );
+    assert_eq!(query_solver.next(), None);
+}
+
+#[test]
+fn test_query_solver_no_match() {
+    let rules = vec![(
+        Predicate {
+            name: "parent".to_string(),
+            terms: vec![Term::Atom("tom".to_string()), Term::Atom("liz".to_string())],
+        },
+        vec![],
+    )];
+    let query = Query {
+        predicates: vec![Predicate {
+            name: "parent".to_string(),
+            terms: vec![Term::Atom("tom".to_string()), Term::Atom("bob".to_string())],
+        }],
+    };
+
+    let mut query_solver = QuerySolver::new(rules, query);
     assert_eq!(query_solver.next(), None);
 }
 
@@ -220,23 +273,20 @@ fn test_query_solver() {
 
 /// Composes two environments.
 fn compose(env1: &Environment, env2: &Environment) -> Environment {
-    let mut env = Environment::new();
-    for (var, term) in env1.bindings.iter() {
-        env.bind(var.clone(), apply_env(term, env2));
-    }
+    let mut env = env1.clone();
     for (var, term) in env2.bindings.iter() {
-        env.bind(var.clone(), apply_env(term, env1));
+        env.bind(var.clone(), apply_env(term, &env));
     }
     env
 }
 
 #[test]
 fn test_compose() {
-    let mut env1 = Environment::new();
+    let mut env1 = Environment::default();
     env1.bind("X".to_string(), Term::Integer(1));
     env1.bind("Y".to_string(), Term::Integer(2));
     env1.bind("Z".to_string(), Term::Integer(3));
-    let mut env2 = Environment::new();
+    let mut env2 = Environment::default();
     env2.bind("X".to_string(), Term::Integer(4));
     env2.bind("Y".to_string(), Term::Integer(5));
     env2.bind("W".to_string(), Term::Integer(6));
@@ -276,7 +326,7 @@ fn apply_env(term: &Term, env: &Environment) -> Term {
 
 #[test]
 fn test_apply_env() {
-    let mut env = Environment::new();
+    let mut env = Environment::default();
     env.bind("X".to_string(), Term::Integer(1));
     env.bind("Y".to_string(), Term::Integer(2));
     env.bind("Z".to_string(), Term::Integer(3));
@@ -304,7 +354,7 @@ fn apply_env_terms(terms: &[Term], env: &Environment) -> Vec<Term> {
 }
 
 fn unify(term1: &Term, term2: &Term) -> Option<Environment> {
-    let mut env = Environment::new();
+    let mut env = Environment::default();
     if unify_helper(term1, term2, &mut env) {
         Some(env)
     } else {
@@ -313,7 +363,7 @@ fn unify(term1: &Term, term2: &Term) -> Option<Environment> {
 }
 
 fn unify_terms(terms1: &[Term], terms2: &[Term]) -> Option<Environment> {
-    let mut env = Environment::new();
+    let mut env = Environment::default();
     if terms1.len() != terms2.len() {
         return None;
     }
@@ -370,7 +420,7 @@ fn unify_helper(term1: &Term, term2: &Term, env: &mut Environment) -> bool {
 
 #[test]
 fn test_unify_helper() {
-    let mut env = Environment::new();
+    let mut env = Environment::default();
     assert_eq!(
         unify_helper(
             &Term::Structure(
@@ -399,5 +449,143 @@ fn test_unify_helper() {
         .iter()
         .cloned()
         .collect()
+    );
+}
+#[test]
+fn test_unify_with_nested_structures() {
+    let mut env = Environment::default();
+    assert_eq!(
+        unify_helper(
+            &Term::Structure(
+                "parent".to_string(),
+                vec![
+                    Term::Structure("person".to_string(), vec![Term::Variable("X".to_string())]),
+                    Term::Structure("person".to_string(), vec![Term::Variable("Y".to_string())])
+                ]
+            ),
+            &Term::Structure(
+                "parent".to_string(),
+                vec![
+                    Term::Structure("person".to_string(), vec![Term::Atom("alice".to_string())]),
+                    Term::Structure("person".to_string(), vec![Term::Atom("bob".to_string())])
+                ]
+            ),
+            &mut env
+        ),
+        true
+    );
+    assert_eq!(
+        env.bindings,
+        [
+            ("X".to_string(), Term::Atom("alice".to_string())),
+            ("Y".to_string(), Term::Atom("bob".to_string()))
+        ]
+        .iter()
+        .cloned()
+        .collect()
+    );
+}
+
+#[test]
+fn test_unify_with_lists() {
+    let mut env = Environment::default();
+    assert_eq!(
+        unify_helper(
+            &Term::List(vec![
+                Term::Variable("X".to_string()),
+                Term::Variable("Y".to_string())
+            ]),
+            &Term::List(vec![Term::Integer(1), Term::Integer(2)]),
+            &mut env
+        ),
+        true
+    );
+    assert_eq!(
+        env.bindings,
+        [
+            ("X".to_string(), Term::Integer(1)),
+            ("Y".to_string(), Term::Integer(2))
+        ]
+        .iter()
+        .cloned()
+        .collect()
+    );
+}
+
+#[test]
+fn test_unify_with_recursive_structures() {
+    let mut env = Environment::default();
+    assert_eq!(
+        unify_helper(
+            &Term::Structure(
+                "node".to_string(),
+                vec![
+                    Term::Variable("X".to_string()),
+                    Term::Structure(
+                        "node".to_string(),
+                        vec![
+                            Term::Variable("Y".to_string()),
+                            Term::Variable("Z".to_string())
+                        ]
+                    )
+                ]
+            ),
+            &Term::Structure(
+                "node".to_string(),
+                vec![
+                    Term::Integer(1),
+                    Term::Structure("node".to_string(), vec![Term::Integer(2), Term::Integer(3)])
+                ]
+            ),
+            &mut env
+        ),
+        true
+    );
+    assert_eq!(
+        env.bindings,
+        [
+            ("X".to_string(), Term::Integer(1)),
+            ("Y".to_string(), Term::Integer(2)),
+            ("Z".to_string(), Term::Integer(3))
+        ]
+        .iter()
+        .cloned()
+        .collect()
+    );
+}
+
+#[test]
+fn test_unify_with_failure() {
+    let mut env = Environment::default();
+    assert_eq!(
+        unify_helper(
+            &Term::Structure("foo".to_string(), vec![Term::Variable("X".to_string())]),
+            &Term::Structure("bar".to_string(), vec![Term::Integer(1)]),
+            &mut env
+        ),
+        false
+    );
+    assert!(env.bindings.is_empty());
+}
+
+#[test]
+fn test_unify_with_existing_bindings() {
+    let mut env = Environment::default();
+    env.bindings.insert("X".to_string(), Term::Integer(1));
+
+    assert_eq!(
+        unify_helper(
+            &Term::Variable("X".to_string()),
+            &Term::Integer(1),
+            &mut env
+        ),
+        true
+    );
+    assert_eq!(
+        env.bindings,
+        [("X".to_string(), Term::Integer(1))]
+            .iter()
+            .cloned()
+            .collect()
     );
 }

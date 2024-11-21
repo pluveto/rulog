@@ -61,7 +61,7 @@ impl Interpreter {
     ) -> Result<(), InterpretingError> {
         log::trace!("handle query: {:?}", query);
         let handler = handler.unwrap_or(&PrintSolutionHandler);
-        let mut query_solver = QuerySolver::new(self.clauses.clone(), query);
+        let query_solver = QuerySolver::new(self.clauses.clone(), query);
 
         let mut has_solution = false;
         for solution in query_solver {

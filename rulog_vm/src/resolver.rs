@@ -352,14 +352,14 @@ fn apply_env_terms(terms: &[Term], env: &Environment) -> Vec<Term> {
     terms.iter().map(|t| apply_env(t, env)).collect()
 }
 
-fn unify(term1: &Term, term2: &Term) -> Option<Environment> {
-    let mut env = Environment::default();
-    if unify_helper(term1, term2, &mut env) {
-        Some(env)
-    } else {
-        None
-    }
-}
+// fn unify(term1: &Term, term2: &Term) -> Option<Environment> {
+//     let mut env = Environment::default();
+//     if unify_helper(term1, term2, &mut env) {
+//         Some(env)
+//     } else {
+//         None
+//     }
+// }
 
 fn unify_terms(terms1: &[Term], terms2: &[Term]) -> Option<Environment> {
     let mut env = Environment::default();

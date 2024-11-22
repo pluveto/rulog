@@ -29,6 +29,38 @@ pub enum Term {
     Structure(String, Vec<Term>),
 }
 
+impl std::fmt::Display for Term {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Term::Atom(s) => write!(f, "{}", s),
+            Term::Variable(s) => write!(f, "{}", s),
+            Term::Integer(i) => write!(f, "{}", i),
+            Term::Float(Float(val)) => write!(f, "{}", val),
+            Term::String(s) => write!(f, "\"{}\"", s),
+            Term::List(terms) => {
+                write!(f, "[")?;
+                for (i, term) in terms.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", term)?;
+                }
+                write!(f, "]")
+            }
+            Term::Structure(name, terms) => {
+                write!(f, "{}(", name)?;
+                for (i, term) in terms.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", term)?;
+                }
+                write!(f, ")")
+            }
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct Float(pub f64);
 

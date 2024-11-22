@@ -19,6 +19,14 @@ impl Environment {
         self.bind(var, term);
         self
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.bindings.is_empty()
+    }
+
+    pub fn iter(&self) -> std::collections::hash_map::Iter<String, Term> {
+        self.bindings.iter()
+    }
 }
 
 impl FromIterator<(std::string::String, Term)> for Environment {

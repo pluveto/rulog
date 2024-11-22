@@ -3,9 +3,11 @@ use rulog_core::{
     types::ast::{Clause, Directive, OperatorDefinition, Predicate, Query},
 };
 
-use std::collections::HashMap;
+use std::io::{self, Write};
+use std::{cell::RefCell, collections::HashMap};
 
 use crate::{
+    environment::Environment,
     resolver::{QuerySolution, QuerySolver},
     types::InterpretingError,
 };
@@ -60,7 +62,7 @@ impl Interpreter {
         handler: Option<&dyn SolutionHandler>,
     ) -> Result<(), InterpretingError> {
         log::trace!("handle query: {:?}", query);
-        let handler = handler.unwrap_or(&PrintSolutionHandler);
+        let handler = handler.unwrap_or(&ConsoleSolutionHandler);
         let query_solver = QuerySolver::new(self.clauses.clone(), query);
 
         let mut has_solution = false;
@@ -94,13 +96,54 @@ impl Interpreter {
         Ok(())
     }
 }
+pub struct WriteSolutionHandler<'a, W: Write> {
+    writer: RefCell<&'a mut W>,
+}
 
-pub struct PrintSolutionHandler;
+impl<'a, W: Write> WriteSolutionHandler<'a, W> {
+    pub fn new(writer: &'a mut W) -> Self {
+        WriteSolutionHandler {
+            writer: RefCell::new(writer),
+        }
+    }
 
-impl SolutionHandler for PrintSolutionHandler {
+    fn print_solution(&self, solution: Option<&QuerySolution>) -> io::Result<()> {
+        let mut writer = self.writer.borrow_mut();
+        if let Some(solution) = solution {
+            if solution.env.is_empty() {
+                writeln!(writer, "true.")?;
+            } else {
+                self.print_env(&mut writer, &solution.env)?;
+            }
+        } else {
+            writeln!(writer, "false.")?;
+        }
+        Ok(())
+    }
+
+    fn print_env(&self, writer: &mut W, env: &Environment) -> io::Result<()> {
+        let mut env_str = String::new();
+        for (var, term) in env.iter() {
+            env_str.push_str(&format!("{} = {}, ", var, term));
+        }
+        writeln!(writer, "{{{}}}.", env_str.trim_end_matches(", "))?;
+        Ok(())
+    }
+}
+
+impl<'a, W: Write> SolutionHandler for WriteSolutionHandler<'a, W> {
     fn handle_solution(&self, solution: Option<&QuerySolution>) -> bool {
-        println!("solution: {:?}", solution);
-        true // Continue processing
+        self.print_solution(solution).is_ok()
+    }
+}
+
+pub struct ConsoleSolutionHandler;
+
+impl SolutionHandler for ConsoleSolutionHandler {
+    fn handle_solution(&self, solution: Option<&QuerySolution>) -> bool {
+        let mut writer = io::stdout();
+        let handler = WriteSolutionHandler::new(&mut writer);
+        handler.handle_solution(solution)
     }
 }
 

@@ -492,6 +492,42 @@ mod tests {
             })
         );
     }
+    #[test]
+    fn test_parse_float() {
+        assert_eq!(
+            parse("temperature(23.5).").unwrap(),
+            Program(vec![Clause::Fact(Predicate {
+                name: "temperature".to_string(),
+                terms: vec![Term::Float(Float(23.5))]
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_string() {
+        assert_eq!(
+            parse("name(\"John Doe\").").unwrap(),
+            Program(vec![Clause::Fact(Predicate {
+                name: "name".to_string(),
+                terms: vec![Term::String("John Doe".to_string())]
+            })])
+        );
+    }
+
+    #[test]
+    fn test_parse_list() {
+        assert_eq!(
+            parse("colors([red, green, blue]).").unwrap(),
+            Program(vec![Clause::Fact(Predicate {
+                name: "colors".to_string(),
+                terms: vec![Term::List(vec![
+                    Term::Atom("red".to_string()),
+                    Term::Atom("green".to_string()),
+                    Term::Atom("blue".to_string())
+                ])]
+            })])
+        );
+    }
 
     //===------------------------------------------------------------------===//
     // Comprehensive tests

@@ -25,7 +25,7 @@ pub enum Term {
     Integer(i64),
     Float(Float),
     String(String),
-    List(Vec<Term>),
+    List(Vec<Term>, Option<Box<Term>>),
     Structure(String, Vec<Term>),
 }
 
@@ -37,13 +37,20 @@ impl std::fmt::Display for Term {
             Term::Integer(i) => write!(f, "{}", i),
             Term::Float(Float(val)) => write!(f, "{}", val),
             Term::String(s) => write!(f, "\"{}\"", s),
-            Term::List(terms) => {
+            Term::List(terms, tail) => {
                 write!(f, "[")?;
                 for (i, term) in terms.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
                     write!(f, "{}", term)?;
+                }
+                if let Some(tail_term) = tail {
+                    if !terms.is_empty() {
+                        write!(f, " | {}", tail_term)?;
+                    } else {
+                        write!(f, "| {}", tail_term)?;
+                    }
                 }
                 write!(f, "]")
             }

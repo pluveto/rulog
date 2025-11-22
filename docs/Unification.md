@@ -39,8 +39,8 @@ a binding from the variable `"X"` to the integer `42`.
 ## Example 3: Unifying two lists with equal elements
 
 ```rust
-let term1 = Term::List(vec![Term::Integer(1), Term::Integer(2)]);
-let term2 = Term::List(vec![Term::Integer(1), Term::Integer(2)]);
+let term1 = Term::List(vec![Term::Integer(1), Term::Integer(2)], None);
+let term2 = Term::List(vec![Term::Integer(1), Term::Integer(2)], None);
 let mut env = Environment::new();
 
 let result = unify(&term1, &term2, &mut env);
@@ -53,7 +53,7 @@ corresponding elements unify successfully.
 
 ```rust
 let term1 = Term::Variable("Y");
-let term2 = Term::List(vec![Term::Atom("apple"), Term::Atom("banana")]);
+let term2 = Term::List(vec![Term::Atom("apple"), Term::Atom("banana")], None);
 let mut env = Environment::new();
 
 let result = unify(&term1, &term2, &mut env);
@@ -78,8 +78,8 @@ not match, even though the elements within them do.
 ## Example 6: Unifying two lists with different lengths
 
 ```rust
-let term1 = Term::List(vec![Term::Integer(1)]);
-let term2 = Term::List(vec![Term::Integer(1), Term::Integer(2)]);
+let term1 = Term::List(vec![Term::Integer(1)], None);
+let term2 = Term::List(vec![Term::Integer(1), Term::Integer(2)], None);
 let mut env = Environment::new();
 
 let result = unify(&term1, &term2, &mut env);

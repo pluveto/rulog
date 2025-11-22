@@ -144,35 +144,30 @@ impl<'a> Lexer<'a> {
 
         // Check if it's a float.
         if self.ch == '.' {
-            self.read_char();
-
-            if !self.ch.is_digit(10) {
-                // Handle error: the character after '.' must be a digit.
-                // For simplicity, we return an integer token here and ignore the '.'.
-                // In a real lexer, you would return an error.
+            if self.peek_char().is_digit(10) {
+                self.read_char();
+                while self.ch.is_digit(10) {
+                    self.read_char();
+                }
+                return Token::Float(
+                    self.input[start_position..self.position]
+                        .parse::<f64>()
+                        .unwrap(),
+                );
+            } else {
                 return Token::Integer(
-                    self.input[start_position..self.position - 1]
+                    self.input[start_position..self.position]
                         .parse::<i64>()
                         .unwrap(),
                 );
             }
-
-            while self.ch.is_digit(10) {
-                self.read_char();
-            }
-
-            Token::Float(
-                self.input[start_position..self.position]
-                    .parse::<f64>()
-                    .unwrap(),
-            )
-        } else {
-            Token::Integer(
-                self.input[start_position..self.position]
-                    .parse::<i64>()
-                    .unwrap(),
-            )
         }
+
+        Token::Integer(
+            self.input[start_position..self.position]
+                .parse::<i64>()
+                .unwrap(),
+        )
     }
 
     fn skip_whitespace(&mut self) {

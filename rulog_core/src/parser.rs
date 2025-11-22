@@ -1,20 +1,58 @@
 use crate::lexer::Lexer;
-use crate::types::ast::{Clause, Directive, OperatorDefinition, Predicate, Program, Query, Term};
+use crate::types::ast::{
+    Clause, Directive, OperatorDefinition, Predicate, Program, Query, Term,
+};
 use crate::types::error::{ParserError, ParsingError};
 use crate::types::token::Token;
+use std::collections::HashMap;
+
+const MAX_OPERATOR_PRIORITY: i64 = 1200;
 
 pub struct Parser<'a> {
     lexer: &'a mut Lexer<'a>,
     current_token: Option<Token>,
+    operator_definitions: HashMap<String, Vec<OperatorDefinition>>,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(lexer: &'a mut Lexer<'a>) -> Self {
         let current_token = lexer.next_token().ok();
-        Parser {
-            lexer: lexer,
-            current_token,
+        let mut operator_definitions: HashMap<String, Vec<OperatorDefinition>> = HashMap::new();
+        for op in default_operator_definitions() {
+            operator_definitions
+                .entry(op.atom.clone())
+                .or_default()
+                .push(op);
         }
+        Parser {
+            lexer,
+            current_token,
+            operator_definitions,
+        }
+    }
+
+    fn register_operator_definition(&mut self, definition: OperatorDefinition) {
+        self.operator_definitions
+            .entry(definition.atom.clone())
+            .or_default()
+            .retain(|existing| existing.operator_type != definition.operator_type);
+        self.operator_definitions
+            .entry(definition.atom.clone())
+            .or_default()
+            .push(definition);
+    }
+
+    fn lookup_operator<F>(
+        &self,
+        name: &str,
+        predicate: F,
+    ) -> Option<&OperatorDefinition>
+    where
+        F: Fn(&OperatorDefinition) -> bool,
+    {
+        self.operator_definitions
+            .get(name)
+            .and_then(|defs| defs.iter().find(|def| predicate(def)))
     }
 
     // Peek current token and check if it is expected
@@ -97,29 +135,15 @@ impl<'a> Parser<'a> {
 
     // Parses a single predicate
     fn parse_predicate(&mut self) -> Result<Predicate, ParsingError> {
-        let cur = self.current_token.clone();
-        match cur {
-            Some(Token::Atom(name)) => {
-                self.comsume(Token::Atom(name.clone()))?;
-                let terms = if self.peek(Token::LeftParenthesis) {
-                    self.comsume(Token::LeftParenthesis)?;
-                    let terms = self.parse_term_list()?;
-                    self.comsume(Token::RightParenthesis)?;
-                    terms
-                } else {
-                    vec![]
-                };
-                Ok(Predicate { name, terms })
-            }
-            Some(Token::Variable(name)) => {
-                self.comsume(Token::Variable(name.clone()))?;
-                Ok(Predicate {
-                    name,
-                    terms: vec![],
-                })
-            }
+        let term = self.parse_expression(goal_min_binding_power())?;
+        match term {
+            Term::Structure(name, terms) => Ok(Predicate { name, terms }),
+            Term::Atom(name) | Term::Variable(name) => Ok(Predicate {
+                name,
+                terms: vec![],
+            }),
             _ => Err(ParsingError::new(ParserError::UnexpectedToken(
-                cur.unwrap(),
+                self.current_token.clone().unwrap_or(Token::EndOfFile),
             ))),
         }
     }
@@ -142,38 +166,132 @@ impl<'a> Parser<'a> {
 
     // Parses a single term
     fn parse_term(&mut self) -> Result<Term, ParsingError> {
-        let tok = self.current_token.clone();
-        log::trace!("parse_term: {:?}", tok);
+        self.parse_expression(goal_min_binding_power())
+    }
+
+    fn parse_expression(&mut self, min_bp: i64) -> Result<Term, ParsingError> {
+        let mut lhs = self.parse_primary()?;
+
+        loop {
+            if let Some((name, lbp)) = self.current_postfix_binding_power() {
+                if lbp < min_bp {
+                    break;
+                }
+                self.consume_operator_token(&name)?;
+                lhs = Term::Structure(name, vec![lhs]);
+                continue;
+            }
+
+            if let Some((name, lbp, rbp)) = self.current_infix_binding_power() {
+                if lbp < min_bp {
+                    break;
+                }
+                self.consume_operator_token(&name)?;
+                let rhs = self.parse_expression(rbp)?;
+                lhs = Term::Structure(name, vec![lhs, rhs]);
+                continue;
+            }
+
+            break;
+        }
+
+        Ok(lhs)
+    }
+
+    fn parse_primary(&mut self) -> Result<Term, ParsingError> {
+        let tok = self.current_token.clone().ok_or_else(|| ParsingError::new(ParserError::EndOfFile))?;
         match tok {
-            Some(Token::Variable(v)) => {
+            Token::Variable(v) => {
                 self.comsume(Token::Variable(v.clone()))?;
                 Ok(Term::Variable(v))
             }
-            Some(Token::Integer(i)) => {
+            Token::Integer(i) => {
                 self.comsume(Token::Integer(i))?;
                 Ok(Term::Integer(i))
             }
-            Some(Token::Float(f)) => {
+            Token::Float(f) => {
                 self.comsume(Token::Float(f))?;
                 Ok(Term::Float(f.into()))
             }
-            Some(Token::String(s)) => {
+            Token::String(s) => {
                 self.comsume(Token::String(s.clone()))?;
                 Ok(Term::String(s))
             }
-            Some(Token::LeftBracket) => self.parse_list(),
-            Some(Token::Atom(name)) if self.peek(Token::LeftParenthesis) => {
+            Token::LeftBracket => self.parse_list(),
+            Token::LeftParenthesis => {
                 self.comsume(Token::LeftParenthesis)?;
-                let terms = self.parse_term_list()?;
+                let term = self.parse_expression(0)?;
                 self.comsume(Token::RightParenthesis)?;
-                Ok(Term::Structure(name, terms))
+                Ok(term)
             }
-            Some(Token::Atom(a)) => {
-                self.comsume(Token::Atom(a.clone()))?;
-                Ok(Term::Atom(a))
+            Token::Atom(name) => {
+                self.comsume(Token::Atom(name.clone()))?;
+                if self.peek(Token::LeftParenthesis) {
+                    self.comsume(Token::LeftParenthesis)?;
+                    let terms = self.parse_term_list()?;
+                    self.comsume(Token::RightParenthesis)?;
+                    Ok(Term::Structure(name, terms))
+                } else if let Some(binding) = self.prefix_binding_power_by_name(&name) {
+                    let rhs = self.parse_expression(binding)?;
+                    Ok(Term::Structure(name, vec![rhs]))
+                } else {
+                    Ok(Term::Atom(name))
+                }
             }
+            Token::Operator(op) => {
+                self.comsume(Token::Operator(op.clone()))?;
+                if let Some(binding) = self.prefix_binding_power_by_name(&op) {
+                    let rhs = self.parse_expression(binding)?;
+                    Ok(Term::Structure(op, vec![rhs]))
+                } else {
+                    Err(ParsingError::new(ParserError::UnexpectedToken(
+                        Token::Operator(op),
+                    )))
+                }
+            }
+            Token::Cut => {
+                self.comsume(Token::Cut)?;
+                Ok(Term::Structure("!".to_string(), vec![]))
+            }
+            _ => Err(ParsingError::new(ParserError::UnexpectedToken(tok))),
+        }
+    }
+
+    fn prefix_binding_power_by_name(&self, name: &str) -> Option<i64> {
+        let definition = self.lookup_operator(name, |def| matches!(def.operator_type.as_str(), "fx" | "fy"))?;
+        prefix_binding_power(definition)
+    }
+
+    fn current_postfix_binding_power(&self) -> Option<(String, i64)> {
+        let name = self.current_operator_name()?;
+        let definition = self.lookup_operator(&name, |def| matches!(def.operator_type.as_str(), "xf" | "yf"))?;
+        postfix_binding_power(definition).map(|bp| (name, bp))
+    }
+
+    fn current_infix_binding_power(&self) -> Option<(String, i64, i64)> {
+        let name = self.current_operator_name()?;
+        let definition = self.lookup_operator(&name, |def| matches!(def.operator_type.as_str(), "xfx" | "xfy" | "yfx"))?;
+        infix_binding_power(definition).map(|(lbp, rbp)| (name, lbp, rbp))
+    }
+
+    fn current_operator_name(&self) -> Option<String> {
+        match self.current_token.as_ref()? {
+            Token::Operator(op) => Some(op.clone()),
+            Token::Atom(atom) if self.operator_definitions.contains_key(atom) => Some(atom.clone()),
+            Token::Comma => Some(",".to_string()),
+            Token::Semicolon => Some(";".to_string()),
+            _ => None,
+        }
+    }
+
+    fn consume_operator_token(&mut self, name: &str) -> Result<(), ParsingError> {
+        match self.current_token.clone() {
+            Some(Token::Operator(op)) if op == name => self.comsume(Token::Operator(op)),
+            Some(Token::Atom(atom)) if atom == name => self.comsume(Token::Atom(atom)),
+            Some(Token::Comma) if name == "," => self.comsume(Token::Comma),
+            Some(Token::Semicolon) if name == ";" => self.comsume(Token::Semicolon),
             _ => Err(ParsingError::new(ParserError::UnexpectedToken(
-                tok.unwrap_or(Token::EndOfFile),
+                self.current_token.clone().unwrap_or(Token::EndOfFile),
             ))),
         }
     }
@@ -184,19 +302,26 @@ impl<'a> Parser<'a> {
 
         if self.peek(Token::RightBracket) {
             self.comsume(Token::RightBracket)?;
-            return Ok(Term::List(vec![]));
+            return Ok(Term::List(vec![], None));
         }
 
-        let terms = self.parse_term_list()?;
-        if self.peek(Token::Bar) {
-            self.comsume(Token::Bar)?;
-            let tail = Box::new(self.parse_term()?);
-            Ok(Term::List(
-                terms.into_iter().chain(std::iter::once(*tail)).collect(),
-            ))
-        } else {
+        let mut elements = Vec::new();
+        loop {
+            elements.push(self.parse_term()?);
+            if self.peek(Token::Comma) {
+                self.comsume(Token::Comma)?;
+                continue;
+            }
+
+            if self.peek(Token::Bar) {
+                self.comsume(Token::Bar)?;
+                let tail = self.parse_term()?;
+                self.comsume(Token::RightBracket)?;
+                return Ok(Term::List(elements, Some(Box::new(tail))));
+            }
+
             self.comsume(Token::RightBracket)?;
-            Ok(Term::List(terms))
+            return Ok(Term::List(elements, None));
         }
     }
 
@@ -265,11 +390,13 @@ impl<'a> Parser<'a> {
         self.comsume(Token::Comma)?;
         let atom = self.parse_atom()?;
         self.comsume(Token::RightParenthesis)?;
-        Ok(Directive::OperatorDefinition(OperatorDefinition {
+        let definition = OperatorDefinition {
             priority,
             operator_type,
             atom,
-        }))
+        };
+        self.register_operator_definition(definition.clone());
+        Ok(Directive::OperatorDefinition(definition))
     }
 
     // Parses a query
@@ -286,6 +413,97 @@ pub fn parse(input: &str) -> Result<Program, ParsingError> {
     let mut lexer = Lexer::new(input);
     let mut parser = Parser::new(&mut lexer);
     parser.parse()
+}
+
+fn clamp_priority(priority: i64) -> i64 {
+    priority.clamp(0, MAX_OPERATOR_PRIORITY)
+}
+
+fn precedence_from_priority(priority: i64) -> i64 {
+    let clamped = clamp_priority(priority);
+    (MAX_OPERATOR_PRIORITY - clamped + 1) * 2
+}
+
+fn prefix_binding_power(definition: &OperatorDefinition) -> Option<i64> {
+    let prec = precedence_from_priority(definition.priority);
+    match definition.operator_type.as_str() {
+        "fx" => Some(prec + 1),
+        "fy" => Some(prec),
+        _ => None,
+    }
+}
+
+fn postfix_binding_power(definition: &OperatorDefinition) -> Option<i64> {
+    let prec = precedence_from_priority(definition.priority);
+    match definition.operator_type.as_str() {
+        "xf" => Some(prec + 1),
+        "yf" => Some(prec),
+        _ => None,
+    }
+}
+
+fn infix_binding_power(definition: &OperatorDefinition) -> Option<(i64, i64)> {
+    let prec = precedence_from_priority(definition.priority);
+    match definition.operator_type.as_str() {
+        "xfx" => Some((prec, prec + 1)),
+        "xfy" => Some((prec, prec)),
+        "yfx" => Some((prec, prec + 1)),
+        _ => None,
+    }
+}
+
+fn goal_min_binding_power() -> i64 {
+    precedence_from_priority(1000) + 2
+}
+
+fn default_operator_definitions() -> Vec<OperatorDefinition> {
+    vec![
+        OperatorDefinition {
+            priority: 1100,
+            operator_type: "xfy".to_string(),
+            atom: ";".to_string(),
+        },
+        OperatorDefinition {
+            priority: 1000,
+            operator_type: "yfx".to_string(),
+            atom: ",".to_string(),
+        },
+        OperatorDefinition {
+            priority: 700,
+            operator_type: "xfx".to_string(),
+            atom: "=".to_string(),
+        },
+        OperatorDefinition {
+            priority: 700,
+            operator_type: "xfx".to_string(),
+            atom: "is".to_string(),
+        },
+        OperatorDefinition {
+            priority: 500,
+            operator_type: "yfx".to_string(),
+            atom: "+".to_string(),
+        },
+        OperatorDefinition {
+            priority: 500,
+            operator_type: "yfx".to_string(),
+            atom: "-".to_string(),
+        },
+        OperatorDefinition {
+            priority: 400,
+            operator_type: "yfx".to_string(),
+            atom: "*".to_string(),
+        },
+        OperatorDefinition {
+            priority: 400,
+            operator_type: "yfx".to_string(),
+            atom: "/".to_string(),
+        },
+        OperatorDefinition {
+            priority: 200,
+            operator_type: "fy".to_string(),
+            atom: "-".to_string(),
+        },
+    ]
 }
 
 #[cfg(test)]
@@ -344,7 +562,7 @@ mod tests {
         setup_logger();
         let mut lexer = Lexer::new("[]");
         let mut parser = Parser::new(&mut lexer);
-        assert_eq!(parser.parse_list().unwrap(), Term::List(vec![]));
+        assert_eq!(parser.parse_list().unwrap(), Term::List(vec![], None));
     }
 
     #[test]
@@ -352,7 +570,7 @@ mod tests {
         setup_logger();
         let mut lexer = Lexer::new("[]");
         let mut parser = Parser::new(&mut lexer);
-        assert_eq!(parser.parse_term().unwrap(), Term::List(vec![]));
+        assert_eq!(parser.parse_term().unwrap(), Term::List(vec![], None));
     }
 
     #[test]
@@ -373,7 +591,10 @@ mod tests {
         let mut parser = Parser::new(&mut lexer);
         assert_eq!(
             parser.parse_term().unwrap(),
-            Term::List(vec![Term::Integer(1), Term::Integer(2), Term::Integer(3)])
+            Term::List(
+                vec![Term::Integer(1), Term::Integer(2), Term::Integer(3)],
+                None
+            )
         );
     }
 
@@ -383,12 +604,10 @@ mod tests {
         let mut parser = Parser::new(&mut lexer);
         assert_eq!(
             parser.parse_term().unwrap(),
-            Term::List(vec![
-                Term::Integer(1),
-                Term::Integer(2),
-                Term::Integer(3),
-                Term::Variable("X".to_string())
-            ])
+            Term::List(
+                vec![Term::Integer(1), Term::Integer(2), Term::Integer(3)],
+                Some(Box::new(Term::Variable("X".to_string())))
+            )
         );
     }
 
@@ -434,6 +653,19 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_tuple_expression() {
+        let mut lexer = Lexer::new("(a, b)");
+        let mut parser = Parser::new(&mut lexer);
+        assert_eq!(
+            parser.parse_term().unwrap(),
+            Term::Structure(
+                ",".to_string(),
+                vec![Term::Atom("a".to_string()), Term::Atom("b".to_string())]
+            )
+        );
+    }
+
+    #[test]
     fn test_parse_clause_case_fact() {
         setup_logger();
         let mut lexer = Lexer::new("foo.");
@@ -461,6 +693,38 @@ mod tests {
                 }]
             }
         );
+    }
+
+    #[test]
+    fn test_parse_infix_expression_precedence() {
+        setup_logger();
+        let program = parse("?- X = 1 + 2 * 3.").unwrap();
+        assert_eq!(program.0.len(), 1);
+        match &program.0[0] {
+            Clause::Query(query) => {
+                assert_eq!(query.predicates.len(), 1);
+                let predicate = &query.predicates[0];
+                assert_eq!(predicate.name, "=");
+                assert_eq!(
+                    predicate.terms[0],
+                    Term::Variable("X".to_string())
+                );
+                assert_eq!(
+                    predicate.terms[1],
+                    Term::Structure(
+                        "+".to_string(),
+                        vec![
+                            Term::Integer(1),
+                            Term::Structure(
+                                "*".to_string(),
+                                vec![Term::Integer(2), Term::Integer(3)]
+                            )
+                        ]
+                    )
+                );
+            }
+            clause => panic!("expected query, got {:?}", clause),
+        }
     }
 
     #[test]
@@ -524,7 +788,7 @@ mod tests {
                     Term::Atom("red".to_string()),
                     Term::Atom("green".to_string()),
                     Term::Atom("blue".to_string())
-                ])]
+                ], None)]
             })])
         );
     }

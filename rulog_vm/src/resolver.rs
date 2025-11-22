@@ -314,7 +314,11 @@ fn apply_env(term: &Term, env: &Environment) -> Term {
                 term.clone()
             }
         }
-        Term::List(terms) => Term::List(terms.iter().map(|t| apply_env(t, env)).collect()),
+        Term::List(terms, tail) => Term::List(
+            terms.iter().map(|t| apply_env(t, env)).collect(),
+            tail.as_ref()
+                .map(|t| Box::new(apply_env(t, env))),
+        ),
         Term::Structure(name, terms) => Term::Structure(
             name.clone(),
             terms.iter().map(|t| apply_env(t, env)).collect(),
@@ -350,6 +354,10 @@ fn test_apply_env() {
 
 fn apply_env_terms(terms: &[Term], env: &Environment) -> Vec<Term> {
     terms.iter().map(|t| apply_env(t, env)).collect()
+}
+
+fn empty_list_term() -> Term {
+    Term::List(vec![], None)
 }
 
 // fn unify(term1: &Term, term2: &Term) -> Option<Environment> {
@@ -393,13 +401,8 @@ fn unify_helper(term1: &Term, term2: &Term, env: &mut Environment) -> bool {
             }
         }
         // if both terms are lists and have the same length, unify the pairs of items
-        (Term::List(l1), Term::List(l2)) if l1.len() == l2.len() => {
-            for (item1, item2) in l1.iter().zip(l2.iter()) {
-                if !unify_helper(item1, item2, env) {
-                    return false;
-                }
-            }
-            true
+        (Term::List(items1, tail1), Term::List(items2, tail2)) => {
+            unify_list_terms(items1, tail1, items2, tail2, env)
         }
         // if both terms are list structures and have the same name and arity, unify the pairs of items
         (Term::Structure(name1, terms1), Term::Structure(name2, terms2))
@@ -414,6 +417,45 @@ fn unify_helper(term1: &Term, term2: &Term, env: &mut Environment) -> bool {
         }
         // otherwise, the terms cannot be unified
         _ => false,
+    }
+}
+
+fn unify_list_terms(
+    items1: &[Term],
+    tail1: &Option<Box<Term>>,
+    items2: &[Term],
+    tail2: &Option<Box<Term>>,
+    env: &mut Environment,
+) -> bool {
+    let mut index = 0;
+    while index < items1.len() && index < items2.len() {
+        if !unify_helper(&items1[index], &items2[index], env) {
+            return false;
+        }
+        index += 1;
+    }
+
+    if index < items1.len() {
+        let remainder = Term::List(items1[index..].to_vec(), tail1.clone());
+        return match tail2 {
+            Some(tail) => unify_helper(&remainder, tail, env),
+            None => unify_helper(&remainder, &empty_list_term(), env),
+        };
+    }
+
+    if index < items2.len() {
+        let remainder = Term::List(items2[index..].to_vec(), tail2.clone());
+        return match tail1 {
+            Some(tail) => unify_helper(tail, &remainder, env),
+            None => unify_helper(&empty_list_term(), &remainder, env),
+        };
+    }
+
+    match (tail1, tail2) {
+        (Some(t1), Some(t2)) => unify_helper(t1, t2, env),
+        (Some(t1), None) => unify_helper(t1, &empty_list_term(), env),
+        (None, Some(t2)) => unify_helper(&empty_list_term(), t2, env),
+        (None, None) => true,
     }
 }
 
@@ -493,8 +535,8 @@ fn test_unify_with_lists() {
             &Term::List(vec![
                 Term::Variable("X".to_string()),
                 Term::Variable("Y".to_string())
-            ]),
-            &Term::List(vec![Term::Integer(1), Term::Integer(2)]),
+            ], None),
+            &Term::List(vec![Term::Integer(1), Term::Integer(2)], None),
             &mut env
         ),
         true

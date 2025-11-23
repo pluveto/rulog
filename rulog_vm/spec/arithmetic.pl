@@ -11,3 +11,9 @@ mix(Z) :- A is 3, Z is A + 0.5.
 ?- 2 =\= 2.
 ?- 3 >= 2.
 ?- 2 =< 3.
+?- var(X).
+?- nonvar(hello).
+?- atom(hello).
+?- integer(42).
+?- float(3.14).
+?- compound(foo(1)).

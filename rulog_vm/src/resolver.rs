@@ -196,6 +196,60 @@ impl QuerySolver {
             "<" | ">" | ">=" | "=<" | "<=" | "=:=" | "=\\=" if goal.terms.len() == 2 => {
                 self.handle_comparison(state, goal)
             }
+            "var" if goal.terms.len() == 1 => {
+                let term = apply_env(&goal.terms[0], &state.env);
+                if matches!(term, Term::Variable(_)) {
+                    self.stack.push(state);
+                    true
+                } else {
+                    false
+                }
+            }
+            "nonvar" if goal.terms.len() == 1 => {
+                let term = apply_env(&goal.terms[0], &state.env);
+                if !matches!(term, Term::Variable(_)) {
+                    self.stack.push(state);
+                    true
+                } else {
+                    false
+                }
+            }
+            "atom" if goal.terms.len() == 1 => {
+                let term = apply_env(&goal.terms[0], &state.env);
+                if matches!(term, Term::Atom(_)) {
+                    self.stack.push(state);
+                    true
+                } else {
+                    false
+                }
+            }
+            "integer" if goal.terms.len() == 1 => {
+                let term = apply_env(&goal.terms[0], &state.env);
+                if matches!(term, Term::Integer(_)) {
+                    self.stack.push(state);
+                    true
+                } else {
+                    false
+                }
+            }
+            "float" if goal.terms.len() == 1 => {
+                let term = apply_env(&goal.terms[0], &state.env);
+                if matches!(term, Term::Float(_)) {
+                    self.stack.push(state);
+                    true
+                } else {
+                    false
+                }
+            }
+            "compound" if goal.terms.len() == 1 => {
+                let term = apply_env(&goal.terms[0], &state.env);
+                if matches!(term, Term::Structure(_, _) | Term::List(_, _)) {
+                    self.stack.push(state);
+                    true
+                } else {
+                    false
+                }
+            }
             "\\+" | "not" if goal.terms.len() == 1 => {
                 if let Some(negated_goals) = goal_sequence_from_term(&goal.terms[0]) {
                     let failure_choice_point = self.next_choice_point();
@@ -779,6 +833,28 @@ fn test_greater_equal_builtin_fails() {
     };
     let mut solver = QuerySolver::new(rules, query);
     assert_eq!(solver.next(), None);
+}
+
+#[test]
+fn test_var_and_nonvar_builtins() {
+    let rules = vec![];
+    let query_var = Query {
+        predicates: vec![Predicate {
+            name: "var".to_string(),
+            terms: vec![Term::Variable("X".to_string())],
+        }],
+    };
+    let mut solver_var = QuerySolver::new(rules.clone(), query_var);
+    assert!(solver_var.next().is_some());
+
+    let query_nonvar = Query {
+        predicates: vec![Predicate {
+            name: "nonvar".to_string(),
+            terms: vec![Term::Atom("hello".to_string())],
+        }],
+    };
+    let mut solver_nonvar = QuerySolver::new(rules, query_nonvar);
+    assert!(solver_nonvar.next().is_some());
 }
 
 /// Composes two environments.

@@ -255,6 +255,7 @@ impl QuerySolver {
             "functor" if goal.terms.len() == 3 => self.handle_functor(state, goal),
             "arg" if goal.terms.len() == 3 => self.handle_arg(state, goal),
             "=.." if goal.terms.len() == 2 => self.handle_univ(state, goal),
+            name if name.starts_with("call") => self.handle_call(state, goal),
             "\\+" | "not" if goal.terms.len() == 1 => {
                 if let Some(negated_goals) = goal_sequence_from_term(&goal.terms[0]) {
                     let failure_choice_point = self.next_choice_point();
@@ -472,6 +473,48 @@ impl QuerySolver {
                 } else {
                     false
                 }
+            }
+        }
+    }
+
+    fn handle_call(&mut self, mut state: ExecutionState, goal: &Predicate) -> bool {
+        let arity_suffix = if goal.name == "call" {
+            None
+        } else if let Some(suffix) = goal.name.strip_prefix("call") {
+            match suffix.parse::<usize>() {
+                Ok(value) => Some(value),
+                Err(_) => return false,
+            }
+        } else {
+            return false;
+        };
+        if let Some(n) = arity_suffix {
+            if goal.terms.len() != n {
+                return false;
+            }
+        }
+        if goal.terms.is_empty() {
+            return false;
+        }
+        let mut args = Vec::new();
+        for term in &goal.terms[1..] {
+            args.push(apply_env(term, &state.env));
+        }
+        let mut callable = apply_env(&goal.terms[0], &state.env);
+        loop {
+            match callable {
+                Term::Structure(name, mut terms) => {
+                    terms.extend(args.into_iter());
+                    state.goals.push(Predicate { name, terms });
+                    self.stack.push(state);
+                    return true;
+                }
+                Term::Atom(name) => {
+                    state.goals.push(Predicate { name, terms: args });
+                    self.stack.push(state);
+                    return true;
+                }
+                _ => return false,
             }
         }
     }
@@ -1462,12 +1505,6 @@ fn build_term_from_name_and_args(name: &str, args: &[Term]) -> Option<Term> {
     if name == "[]" {
         if args.is_empty() {
             Some(Term::List(vec![], None))
-        } else {
-            None
-        }
-    } else if name == "." {
-        if args.len() == 2 {
-            Some(build_list_from_cons(args[0].clone(), args[1].clone()))
         } else {
             None
         }

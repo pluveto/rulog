@@ -166,6 +166,31 @@ impl QuerySolver {
                     false
                 }
             }
+            "is" if goal.terms.len() == 2 => {
+                match evaluate_numeric_term(&goal.terms[1], &state.env) {
+                    Ok(result) => {
+                        let rhs_term = result.into_term();
+                        let lhs = apply_env(&goal.terms[0], &state.env);
+                        let mut delta_env = Environment::default();
+                        if unify_helper(&lhs, &rhs_term, &mut delta_env) {
+                            let new_env = compose(&state.env, &delta_env);
+                            self.stack.push(ExecutionState {
+                                goals: state.goals,
+                                env: new_env,
+                                choice_point_id: state.choice_point_id,
+                                cut_parent_id: state.cut_parent_id,
+                            });
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    Err(err) => {
+                        log::debug!("is/2 evaluation failed: {:?}", err);
+                        false
+                    }
+                }
+            }
             "\\+" | "not" if goal.terms.len() == 1 => {
                 if let Some(negated_goals) = goal_sequence_from_term(&goal.terms[0]) {
                     let failure_choice_point = self.next_choice_point();
@@ -629,6 +654,69 @@ fn test_negation_operator() {
     assert_eq!(solver_fail.next(), None);
 }
 
+#[test]
+fn test_is_builtin_assigns_value() {
+    let rules = vec![];
+    let query = Query {
+        predicates: vec![Predicate {
+            name: "is".to_string(),
+            terms: vec![
+                Term::Variable("X".to_string()),
+                Term::Structure(
+                    "+".to_string(),
+                    vec![Term::Integer(1), Term::Integer(2)],
+                ),
+            ],
+        }],
+    };
+
+    let mut solver = QuerySolver::new(rules, query);
+    let solution = solver.next().unwrap();
+    assert_eq!(
+        solution.env,
+        [("X".to_string(), Term::Integer(3))]
+            .into_iter()
+            .collect()
+    );
+    assert_eq!(solver.next(), None);
+}
+
+#[test]
+fn test_is_builtin_with_existing_binding() {
+    let rules = vec![
+        (
+            Predicate {
+                name: "start".to_string(),
+                terms: vec![Term::Variable("X".to_string())],
+            },
+            vec![Predicate {
+                name: "is".to_string(),
+                terms: vec![
+                    Term::Variable("X".to_string()),
+                    Term::Structure(
+                        "-".to_string(),
+                        vec![Term::Integer(10), Term::Integer(3)],
+                    ),
+                ],
+            }],
+        ),
+    ];
+    let query = Query {
+        predicates: vec![Predicate {
+            name: "start".to_string(),
+            terms: vec![Term::Variable("R".to_string())],
+        }],
+    };
+
+    let mut solver = QuerySolver::new(rules, query);
+    let solution = solver.next().unwrap();
+    assert_eq!(
+        apply_env(&Term::Variable("R".to_string()), &solution.env),
+        Term::Integer(7)
+    );
+    assert_eq!(solver.next(), None);
+}
+
 /// Composes two environments.
 fn compose(env1: &Environment, env2: &Environment) -> Environment {
     let mut env = env1.clone();
@@ -854,6 +942,112 @@ fn predicate_from_term(term: &Term) -> Option<Predicate> {
 fn append_goal_sequence(target: &mut Vec<Predicate>, sequence: Vec<Predicate>) {
     for goal in sequence.into_iter().rev() {
         target.push(goal);
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug)]
+enum ArithmeticError {
+    UnsupportedOperator(String),
+    InvalidOperand(Term),
+    ArityMismatch(String),
+    UnboundVariable(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum NumericValue {
+    Integer(i64),
+    Float(f64),
+}
+
+impl NumericValue {
+    fn into_term(self) -> Term {
+        match self {
+            NumericValue::Integer(i) => Term::Integer(i),
+            NumericValue::Float(f) => Term::Float(f.into()),
+        }
+    }
+
+    fn as_f64(self) -> f64 {
+        match self {
+            NumericValue::Integer(i) => i as f64,
+            NumericValue::Float(f) => f,
+        }
+    }
+}
+
+fn evaluate_numeric_term(term: &Term, env: &Environment) -> Result<NumericValue, ArithmeticError> {
+    let resolved = apply_env(term, env);
+    evaluate_numeric(&resolved, env)
+}
+
+fn evaluate_numeric(term: &Term, env: &Environment) -> Result<NumericValue, ArithmeticError> {
+    match term {
+        Term::Integer(i) => Ok(NumericValue::Integer(*i)),
+        Term::Float(f) => Ok(NumericValue::Float(f.0)),
+        Term::Variable(name) => Err(ArithmeticError::UnboundVariable(name.clone())),
+        Term::Structure(name, terms) => match name.as_str() {
+            "+" => evaluate_binary_op(terms, env, |l, r| add_values(l, r)),
+            "-" => {
+                if terms.len() == 1 {
+                    evaluate_numeric(&terms[0], env).map(negate_value)
+                } else {
+                    evaluate_binary_op(terms, env, |l, r| subtract_values(l, r))
+                }
+            }
+            "*" => evaluate_binary_op(terms, env, |l, r| multiply_values(l, r)),
+            "/" => evaluate_binary_op(terms, env, |l, r| divide_values(l, r)),
+            _ => Err(ArithmeticError::UnsupportedOperator(name.clone())),
+        },
+        _ => Err(ArithmeticError::InvalidOperand(term.clone())),
+    }
+}
+
+fn evaluate_binary_op<F>(
+    terms: &[Term],
+    env: &Environment,
+    op: F,
+) -> Result<NumericValue, ArithmeticError>
+where
+    F: Fn(NumericValue, NumericValue) -> NumericValue,
+{
+    if terms.len() != 2 {
+        return Err(ArithmeticError::ArityMismatch(format!("{}", terms.len())));
+    }
+    let left = evaluate_numeric(&terms[0], env)?;
+    let right = evaluate_numeric(&terms[1], env)?;
+    Ok(op(left, right))
+}
+
+fn add_values(left: NumericValue, right: NumericValue) -> NumericValue {
+    match (left, right) {
+        (NumericValue::Integer(l), NumericValue::Integer(r)) => NumericValue::Integer(l + r),
+        (l, r) => NumericValue::Float(l.as_f64() + r.as_f64()),
+    }
+}
+
+fn subtract_values(left: NumericValue, right: NumericValue) -> NumericValue {
+    match (left, right) {
+        (NumericValue::Integer(l), NumericValue::Integer(r)) => NumericValue::Integer(l - r),
+        (l, r) => NumericValue::Float(l.as_f64() - r.as_f64()),
+    }
+}
+
+fn multiply_values(left: NumericValue, right: NumericValue) -> NumericValue {
+    match (left, right) {
+        (NumericValue::Integer(l), NumericValue::Integer(r)) => NumericValue::Integer(l * r),
+        (l, r) => NumericValue::Float(l.as_f64() * r.as_f64()),
+    }
+}
+
+fn divide_values(left: NumericValue, right: NumericValue) -> NumericValue {
+    NumericValue::Float(left.as_f64() / right.as_f64())
+}
+
+fn negate_value(value: NumericValue) -> NumericValue {
+    match value {
+        NumericValue::Integer(i) => NumericValue::Integer(-i),
+        NumericValue::Float(f) => NumericValue::Float(-f),
     }
 }
 

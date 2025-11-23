@@ -15,6 +15,7 @@ else_value(2).
 
 decision(X) :- (cond -> then_value(X) ; else_value(X)).
 
+?- \+ left(c).
 ?- g(X).
 ?- plain(X).
 ?- choose(Y).

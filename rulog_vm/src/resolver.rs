@@ -127,7 +127,7 @@ impl QuerySolver {
                             goals: right_state_goals,
                             env: state.env.clone(),
                             choice_point_id: right_choice_point,
-                            cut_parent_id: state.choice_point_id,
+                            cut_parent_id: state.cut_parent_id,
                         });
 
                         let mut left_state_goals = state.goals;
@@ -136,7 +136,7 @@ impl QuerySolver {
                             goals: left_state_goals,
                             env: state.env,
                             choice_point_id: left_choice_point,
-                            cut_parent_id: state.choice_point_id,
+                            cut_parent_id: state.cut_parent_id,
                         });
                         true
                     }
@@ -161,6 +161,44 @@ impl QuerySolver {
                         choice_point_id: state.choice_point_id,
                         cut_parent_id: state.cut_parent_id,
                     });
+                    true
+                } else {
+                    false
+                }
+            }
+            "\\+" | "not" if goal.terms.len() == 1 => {
+                if let Some(negated_goals) = goal_sequence_from_term(&goal.terms[0]) {
+                    let failure_choice_point = self.next_choice_point();
+                    let success_choice_point = self.next_choice_point();
+
+                    let success_goals = state.goals.clone();
+                    let mut failure_goals = state.goals;
+                    failure_goals.push(Predicate {
+                        name: "fail".to_string(),
+                        terms: vec![],
+                    });
+                    failure_goals.push(Predicate {
+                        name: "!".to_string(),
+                        terms: vec![],
+                    });
+                    append_goal_sequence(&mut failure_goals, negated_goals);
+
+                    let failure_env = state.env;
+                    let success_env = failure_env.clone();
+                    let failure_state = ExecutionState {
+                        goals: failure_goals,
+                        env: failure_env,
+                        choice_point_id: failure_choice_point,
+                        cut_parent_id: state.cut_parent_id,
+                    };
+                    let success_state = ExecutionState {
+                        goals: success_goals,
+                        env: success_env,
+                        choice_point_id: success_choice_point,
+                        cut_parent_id: state.cut_parent_id,
+                    };
+                    self.stack.push(success_state);
+                    self.stack.push(failure_state);
                     true
                 } else {
                     false
@@ -550,6 +588,45 @@ fn test_if_then_else_operator() {
             .collect()
     );
     assert_eq!(solver.next(), None);
+}
+
+#[test]
+fn test_negation_operator() {
+    let rules = vec![(
+        Predicate {
+            name: "fact".to_string(),
+            terms: vec![Term::Atom("a".to_string())],
+        },
+        vec![],
+    )];
+
+    let query_success = Query {
+        predicates: vec![Predicate {
+            name: "\\+".to_string(),
+            terms: vec![Term::Structure(
+                "fact".to_string(),
+                vec![Term::Atom("b".to_string())],
+            )],
+        }],
+    };
+
+    let mut solver = QuerySolver::new(rules.clone(), query_success);
+    let result = solver.next();
+    assert!(result.is_some());
+    assert_eq!(solver.next(), None);
+
+    let query_failure = Query {
+        predicates: vec![Predicate {
+            name: "\\+".to_string(),
+            terms: vec![Term::Structure(
+                "fact".to_string(),
+                vec![Term::Atom("a".to_string())],
+            )],
+        }],
+    };
+
+    let mut solver_fail = QuerySolver::new(rules, query_failure);
+    assert_eq!(solver_fail.next(), None);
 }
 
 /// Composes two environments.

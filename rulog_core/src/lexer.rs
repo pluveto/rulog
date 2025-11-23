@@ -109,6 +109,14 @@ impl<'a> Lexer<'a> {
                 }
                 return self.next_token();
             }
+            '\\' => {
+                if self.peek_char() == '+' {
+                    self.read_char();
+                    Ok(Token::Operator("\\+".to_string()))
+                } else {
+                    Err(LexerError::UnexpectedCharacter('\\'))
+                }
+            }
             _ => {
                 let ret = if self.ch.is_alphabetic() || self.ch == '_' {
                     Ok(self.read_identifier_or_variable())

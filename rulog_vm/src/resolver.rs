@@ -12,6 +12,7 @@ struct ExecutionState {
     goals: Vec<Predicate>,
     env: Environment,
     choice_point_id: usize,
+    cut_parent_id: usize,
 }
 
 pub struct QuerySolver {
@@ -29,6 +30,7 @@ impl QuerySolver {
             goals: initial_goals,
             env: Environment::default(),
             choice_point_id: 0,
+            cut_parent_id: 0,
         };
 
         QuerySolver {
@@ -94,6 +96,7 @@ impl QuerySolver {
                 goals,
                 env,
                 choice_point_id,
+                cut_parent_id: state.choice_point_id,
             });
         }
     }
@@ -101,7 +104,7 @@ impl QuerySolver {
     fn handle_builtin(&mut self, state: ExecutionState, goal: &Predicate) -> bool {
         match goal.name.as_str() {
             "!" if goal.terms.is_empty() => {
-                self.prune_choice_points(state.choice_point_id);
+                self.prune_choice_points(state.cut_parent_id);
                 self.stack.push(state);
                 true
             }
@@ -109,6 +112,59 @@ impl QuerySolver {
             "true" if goal.terms.is_empty() => {
                 self.stack.push(state);
                 true
+            }
+            ";" if goal.terms.len() == 2 => {
+                let left = goal_sequence_from_term(&goal.terms[0]);
+                let right = goal_sequence_from_term(&goal.terms[1]);
+                match (left, right) {
+                    (Some(left_goals), Some(right_goals)) => {
+                        let left_choice_point = self.next_choice_point();
+                        let right_choice_point = self.next_choice_point();
+
+                        let mut right_state_goals = state.goals.clone();
+                        append_goal_sequence(&mut right_state_goals, right_goals);
+                        self.stack.push(ExecutionState {
+                            goals: right_state_goals,
+                            env: state.env.clone(),
+                            choice_point_id: right_choice_point,
+                            cut_parent_id: state.choice_point_id,
+                        });
+
+                        let mut left_state_goals = state.goals;
+                        append_goal_sequence(&mut left_state_goals, left_goals);
+                        self.stack.push(ExecutionState {
+                            goals: left_state_goals,
+                            env: state.env,
+                            choice_point_id: left_choice_point,
+                            cut_parent_id: state.choice_point_id,
+                        });
+                        true
+                    }
+                    _ => false,
+                }
+            }
+            "->" if goal.terms.len() == 2 => {
+                if let (Some(cond_goals), Some(then_goals)) = (
+                    goal_sequence_from_term(&goal.terms[0]),
+                    goal_sequence_from_term(&goal.terms[1]),
+                ) {
+                    let mut new_goals = state.goals;
+                    append_goal_sequence(&mut new_goals, then_goals);
+                    new_goals.push(Predicate {
+                        name: "!".to_string(),
+                        terms: vec![],
+                    });
+                    append_goal_sequence(&mut new_goals, cond_goals);
+                    self.stack.push(ExecutionState {
+                        goals: new_goals,
+                        env: state.env,
+                        choice_point_id: state.choice_point_id,
+                        cut_parent_id: state.cut_parent_id,
+                    });
+                    true
+                } else {
+                    false
+                }
             }
             _ => false,
         }
@@ -383,6 +439,119 @@ fn test_query_solver() {
     );
 }
 
+#[test]
+fn test_disjunction_operator() {
+    let rules = vec![
+        (
+            Predicate {
+                name: "left".to_string(),
+                terms: vec![Term::Atom("a".to_string())],
+            },
+            vec![],
+        ),
+        (
+            Predicate {
+                name: "right".to_string(),
+                terms: vec![Term::Atom("b".to_string())],
+            },
+            vec![],
+        ),
+    ];
+    let query = Query {
+        predicates: vec![Predicate {
+            name: ";".to_string(),
+            terms: vec![
+                Term::Structure(
+                    "left".to_string(),
+                    vec![Term::Variable("X".to_string())],
+                ),
+                Term::Structure(
+                    "right".to_string(),
+                    vec![Term::Variable("X".to_string())],
+                ),
+            ],
+        }],
+    };
+
+    let mut solver = QuerySolver::new(rules, query);
+    let first = solver.next().unwrap();
+    assert_eq!(
+        first.env,
+        [("X".to_string(), Term::Atom("a".to_string()))]
+            .iter()
+            .cloned()
+            .collect()
+    );
+    let second = solver.next().unwrap();
+    assert_eq!(
+        second.env,
+        [("X".to_string(), Term::Atom("b".to_string()))]
+            .iter()
+            .cloned()
+            .collect()
+    );
+    assert_eq!(solver.next(), None);
+}
+
+#[test]
+fn test_if_then_else_operator() {
+    let rules = vec![
+        (
+            Predicate {
+                name: "condition".to_string(),
+                terms: vec![],
+            },
+            vec![],
+        ),
+        (
+            Predicate {
+                name: "then_value".to_string(),
+                terms: vec![Term::Atom("one".to_string())],
+            },
+            vec![],
+        ),
+        (
+            Predicate {
+                name: "else_value".to_string(),
+                terms: vec![Term::Atom("two".to_string())],
+            },
+            vec![],
+        ),
+    ];
+    let query = Query {
+        predicates: vec![Predicate {
+            name: ";".to_string(),
+            terms: vec![
+                Term::Structure(
+                    "->".to_string(),
+                    vec![
+                        Term::Structure("condition".to_string(), vec![]),
+                        Term::Structure(
+                            "then_value".to_string(),
+                            vec![Term::Variable("X".to_string())],
+                        ),
+                    ],
+                ),
+                Term::Structure(
+                    "else_value".to_string(),
+                    vec![Term::Variable("X".to_string())],
+                ),
+            ],
+        }],
+    };
+
+    let mut solver = QuerySolver::new(rules, query);
+    let result = solver.next().unwrap();
+    assert_eq!(
+        result.env,
+        [("X".to_string(), Term::Atom("one".to_string()))]
+            .iter()
+            .cloned()
+            .collect()
+    );
+    assert_eq!(solver.next(), None);
+}
+
 /// Composes two environments.
 fn compose(env1: &Environment, env2: &Environment) -> Environment {
     let mut env = env1.clone();
@@ -577,6 +746,37 @@ fn unify_list_terms(
         (Some(t1), None) => unify_helper(t1, &empty_list_term(), env),
         (None, Some(t2)) => unify_helper(&empty_list_term(), t2, env),
         (None, None) => true,
+    }
+}
+
+fn goal_sequence_from_term(term: &Term) -> Option<Vec<Predicate>> {
+    match term {
+        Term::Structure(name, terms) if name == "," && terms.len() == 2 => {
+            let mut left = goal_sequence_from_term(&terms[0])?;
+            left.extend(goal_sequence_from_term(&terms[1])?);
+            Some(left)
+        }
+        _ => predicate_from_term(term).map(|predicate| vec![predicate]),
+    }
+}
+
+fn predicate_from_term(term: &Term) -> Option<Predicate> {
+    match term {
+        Term::Structure(name, terms) => Some(Predicate {
+            name: name.clone(),
+            terms: terms.clone(),
+        }),
+        Term::Atom(name) => Some(Predicate {
+            name: name.clone(),
+            terms: vec![],
+        }),
+        _ => None,
+    }
+}
+
+fn append_goal_sequence(target: &mut Vec<Predicate>, sequence: Vec<Predicate>) {
+    for goal in sequence.into_iter().rev() {
+        target.push(goal);
     }
 }
 

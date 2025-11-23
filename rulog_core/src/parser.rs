@@ -464,6 +464,11 @@ fn default_operator_definitions() -> Vec<OperatorDefinition> {
             atom: ";".to_string(),
         },
         OperatorDefinition {
+            priority: 1050,
+            operator_type: "xfy".to_string(),
+            atom: "->".to_string(),
+        },
+        OperatorDefinition {
             priority: 1000,
             operator_type: "yfx".to_string(),
             atom: ",".to_string(),

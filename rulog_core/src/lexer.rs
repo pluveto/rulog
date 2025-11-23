@@ -44,7 +44,14 @@ impl<'a> Lexer<'a> {
 
         let token = match self.ch {
             '+' => Ok(Token::Operator("+".to_string())),
-            '-' => Ok(Token::Operator("-".to_string())),
+            '-' => {
+                if self.peek_char() == '>' {
+                    self.read_char();
+                    Ok(Token::Operator("->".to_string()))
+                } else {
+                    Ok(Token::Operator("-".to_string()))
+                }
+            }
             '*' => Ok(Token::Operator("*".to_string())),
             '/' => Ok(Token::Operator("/".to_string())),
             '<' => Ok(Token::Operator("<".to_string())),

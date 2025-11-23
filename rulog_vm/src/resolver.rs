@@ -23,6 +23,7 @@ pub struct QuerySolver {
     stack: Vec<ExecutionState>,
     next_choice_point_id: usize,
     fresh_var_counter: usize,
+    epsilon_per_call: usize,
 }
 
 impl QuerySolver {
@@ -42,6 +43,7 @@ impl QuerySolver {
             stack: vec![initial_state],
             next_choice_point_id: 1,
             fresh_var_counter: 0,
+            epsilon_per_call: 2,
         }
     }
 }
@@ -255,7 +257,6 @@ impl QuerySolver {
             "functor" if goal.terms.len() == 3 => self.handle_functor(state, goal),
             "arg" if goal.terms.len() == 3 => self.handle_arg(state, goal),
             "=.." if goal.terms.len() == 2 => self.handle_univ(state, goal),
-            name if name.starts_with("call") => self.handle_call(state, goal),
             "\\+" | "not" if goal.terms.len() == 1 => {
                 if let Some(negated_goals) = goal_sequence_from_term(&goal.terms[0]) {
                     let failure_choice_point = self.next_choice_point();
@@ -477,47 +478,36 @@ impl QuerySolver {
         }
     }
 
-    fn handle_call(&mut self, mut state: ExecutionState, goal: &Predicate) -> bool {
-        let arity_suffix = if goal.name == "call" {
-            None
-        } else if let Some(suffix) = goal.name.strip_prefix("call") {
-            match suffix.parse::<usize>() {
-                Ok(value) => Some(value),
-                Err(_) => return false,
-            }
-        } else {
-            return false;
-        };
-        if let Some(n) = arity_suffix {
-            if goal.terms.len() != n {
-                return false;
-            }
-        }
+    fn handle_call(&mut self, state: ExecutionState, goal: &Predicate) -> bool {
         if goal.terms.is_empty() {
             return false;
         }
-        let mut args = Vec::new();
-        for term in &goal.terms[1..] {
-            args.push(apply_env(term, &state.env));
-        }
-        let mut callable = apply_env(&goal.terms[0], &state.env);
-        loop {
-            match callable {
-                Term::Structure(name, mut terms) => {
-                    terms.extend(args.into_iter());
-                    state.goals.push(Predicate { name, terms });
-                    self.stack.push(state);
-                    return true;
+        let callable = apply_env(&goal.terms[0], &state.env);
+        let args: Vec<Term> = goal.terms[1..]
+            .iter()
+            .map(|t| apply_env(t, &state.env))
+            .collect();
+        let predicate = match callable {
+            Term::Atom(name) => Predicate { name, terms: args },
+            Term::Structure(name, mut terms) => {
+                for arg in args {
+                    terms.push(arg);
                 }
-                Term::Atom(name) => {
-                    state.goals.push(Predicate { name, terms: args });
-                    self.stack.push(state);
-                    return true;
-                }
-                _ => return false,
+                Predicate { name, terms }
             }
-        }
+            _ => return false,
+        };
+        let mut new_goals = state.goals.clone();
+        new_goals.push(predicate);
+        self.stack.push(ExecutionState {
+            goals: new_goals,
+            env: state.env,
+            choice_point_id: state.choice_point_id,
+            cut_parent_id: state.cut_parent_id,
+        });
+        true
     }
+
 
     fn prune_choice_points(&mut self, threshold: usize) {
         self.stack

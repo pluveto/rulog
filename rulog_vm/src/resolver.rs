@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use rulog_core::types::ast::{Predicate, Query, Term};
 
 use crate::environment::Environment;
@@ -191,6 +193,9 @@ impl QuerySolver {
                     }
                 }
             }
+            "<" | ">" | ">=" | "=<" | "<=" | "=:=" | "=\\=" if goal.terms.len() == 2 => {
+                self.handle_comparison(state, goal)
+            }
             "\\+" | "not" if goal.terms.len() == 1 => {
                 if let Some(negated_goals) = goal_sequence_from_term(&goal.terms[0]) {
                     let failure_choice_point = self.next_choice_point();
@@ -231,6 +236,38 @@ impl QuerySolver {
             }
             _ => false,
         }
+    }
+
+    fn handle_comparison(&mut self, state: ExecutionState, goal: &Predicate) -> bool {
+        use std::cmp::Ordering;
+        let left = match evaluate_numeric_term(&goal.terms[0], &state.env) {
+            Ok(value) => value,
+            Err(err) => {
+                log::debug!("comparison left eval failed: {:?}", err);
+                return false;
+            }
+        };
+        let right = match evaluate_numeric_term(&goal.terms[1], &state.env) {
+            Ok(value) => value,
+            Err(err) => {
+                log::debug!("comparison right eval failed: {:?}", err);
+                return false;
+            }
+        };
+        let ordering = compare_numeric_values(left, right);
+        let success = match goal.name.as_str() {
+            "<" => ordering == Ordering::Less,
+            ">" => ordering == Ordering::Greater,
+            ">=" => ordering == Ordering::Greater || ordering == Ordering::Equal,
+            "=<" | "<=" => ordering == Ordering::Less || ordering == Ordering::Equal,
+            "=:=" => ordering == Ordering::Equal,
+            "=\\=" => ordering != Ordering::Equal,
+            _ => false,
+        };
+        if success {
+            self.stack.push(state);
+        }
+        success
     }
 
     fn prune_choice_points(&mut self, threshold: usize) {
@@ -717,6 +754,33 @@ fn test_is_builtin_with_existing_binding() {
     assert_eq!(solver.next(), None);
 }
 
+#[test]
+fn test_less_than_builtin_succeeds() {
+    let rules = vec![];
+    let query = Query {
+        predicates: vec![Predicate {
+            name: "<".to_string(),
+            terms: vec![Term::Integer(1), Term::Integer(2)],
+        }],
+    };
+    let mut solver = QuerySolver::new(rules, query);
+    assert!(solver.next().is_some());
+    assert_eq!(solver.next(), None);
+}
+
+#[test]
+fn test_greater_equal_builtin_fails() {
+    let rules = vec![];
+    let query = Query {
+        predicates: vec![Predicate {
+            name: ">=".to_string(),
+            terms: vec![Term::Integer(2), Term::Integer(5)],
+        }],
+    };
+    let mut solver = QuerySolver::new(rules, query);
+    assert_eq!(solver.next(), None);
+}
+
 /// Composes two environments.
 fn compose(env1: &Environment, env2: &Environment) -> Environment {
     let mut env = env1.clone();
@@ -1048,6 +1112,16 @@ fn negate_value(value: NumericValue) -> NumericValue {
     match value {
         NumericValue::Integer(i) => NumericValue::Integer(-i),
         NumericValue::Float(f) => NumericValue::Float(-f),
+    }
+}
+
+fn compare_numeric_values(left: NumericValue, right: NumericValue) -> Ordering {
+    match (left, right) {
+        (NumericValue::Integer(l), NumericValue::Integer(r)) => l.cmp(&r),
+        (l, r) => l
+            .as_f64()
+            .partial_cmp(&r.as_f64())
+            .unwrap_or(Ordering::Equal),
     }
 }
 

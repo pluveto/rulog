@@ -54,9 +54,49 @@ impl<'a> Lexer<'a> {
             }
             '*' => Ok(Token::Operator("*".to_string())),
             '/' => Ok(Token::Operator("/".to_string())),
-            '<' => Ok(Token::Operator("<".to_string())),
-            '>' => Ok(Token::Operator(">".to_string())),
-            '=' => Ok(Token::Operator("=".to_string())),
+            '<' => {
+                if self.peek_char() == '=' {
+                    self.read_char();
+                    Ok(Token::Operator("<=".to_string()))
+                } else {
+                    Ok(Token::Operator("<".to_string()))
+                }
+            }
+            '>' => {
+                if self.peek_char() == '=' {
+                    self.read_char();
+                    Ok(Token::Operator(">=".to_string()))
+                } else {
+                    Ok(Token::Operator(">".to_string()))
+                }
+            }
+            '=' => {
+                match self.peek_char() {
+                    ':' => {
+                        self.read_char();
+                        if self.peek_char() == '=' {
+                            self.read_char();
+                            Ok(Token::Operator("=:=".to_string()))
+                        } else {
+                            Err(LexerError::UnexpectedCharacter(':'))
+                        }
+                    }
+                    '\\' => {
+                        self.read_char();
+                        if self.peek_char() == '=' {
+                            self.read_char();
+                            Ok(Token::Operator("=\\=".to_string()))
+                        } else {
+                            Err(LexerError::UnexpectedCharacter('\\'))
+                        }
+                    }
+                    '<' => {
+                        self.read_char();
+                        Ok(Token::Operator("=<".to_string()))
+                    }
+                    _ => Ok(Token::Operator("=".to_string())),
+                }
+            }
             '!' => Ok(Token::Cut),
             ',' => Ok(Token::Comma),
             '|' => Ok(Token::Bar),

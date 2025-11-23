@@ -486,7 +486,37 @@ fn default_operator_definitions() -> Vec<OperatorDefinition> {
         OperatorDefinition {
             priority: 700,
             operator_type: "xfx".to_string(),
+            atom: "<".to_string(),
+        },
+        OperatorDefinition {
+            priority: 700,
+            operator_type: "xfx".to_string(),
+            atom: ">".to_string(),
+        },
+        OperatorDefinition {
+            priority: 700,
+            operator_type: "xfx".to_string(),
+            atom: ">=".to_string(),
+        },
+        OperatorDefinition {
+            priority: 700,
+            operator_type: "xfx".to_string(),
+            atom: "=<".to_string(),
+        },
+        OperatorDefinition {
+            priority: 700,
+            operator_type: "xfx".to_string(),
             atom: "is".to_string(),
+        },
+        OperatorDefinition {
+            priority: 700,
+            operator_type: "xfx".to_string(),
+            atom: "=:=".to_string(),
+        },
+        OperatorDefinition {
+            priority: 700,
+            operator_type: "xfx".to_string(),
+            atom: "=\\=".to_string(),
         },
         OperatorDefinition {
             priority: 500,

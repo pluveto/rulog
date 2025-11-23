@@ -22,6 +22,7 @@ pub struct QuerySolver {
     pub clauses: Vec<(Predicate, Vec<Predicate>)>,
     stack: Vec<ExecutionState>,
     next_choice_point_id: usize,
+    fresh_var_counter: usize,
 }
 
 impl QuerySolver {
@@ -40,6 +41,7 @@ impl QuerySolver {
             query,
             stack: vec![initial_state],
             next_choice_point_id: 1,
+            fresh_var_counter: 0,
         }
     }
 }
@@ -250,6 +252,9 @@ impl QuerySolver {
                     false
                 }
             }
+            "functor" if goal.terms.len() == 3 => self.handle_functor(state, goal),
+            "arg" if goal.terms.len() == 3 => self.handle_arg(state, goal),
+            "=.." if goal.terms.len() == 2 => self.handle_univ(state, goal),
             "\\+" | "not" if goal.terms.len() == 1 => {
                 if let Some(negated_goals) = goal_sequence_from_term(&goal.terms[0]) {
                     let failure_choice_point = self.next_choice_point();
@@ -324,6 +329,153 @@ impl QuerySolver {
         success
     }
 
+    fn handle_functor(&mut self, state: ExecutionState, goal: &Predicate) -> bool {
+        let term = apply_env(&goal.terms[0], &state.env);
+        let name_term = apply_env(&goal.terms[1], &state.env);
+        let arity_term = apply_env(&goal.terms[2], &state.env);
+
+        match term {
+            Term::Variable(var_name) => {
+                let functor_name = match name_term {
+                    Term::Atom(name) => name,
+                    _ => return false,
+                };
+                let arity = match arity_term {
+                    Term::Integer(n) if n >= 0 => n as usize,
+                    _ => return false,
+                };
+                let args: Vec<Term> = if arity == 0 {
+                    Vec::new()
+                } else {
+                    (0..arity).map(|_| self.fresh_variable()).collect()
+                };
+                let constructed = match build_term_from_name_and_args(&functor_name, &args) {
+                    Some(term) => term,
+                    None => return false,
+                };
+                let mut delta = Environment::default();
+                delta.bind(var_name, constructed);
+                let new_env = compose(&state.env, &delta);
+                self.stack.push(ExecutionState {
+                    goals: state.goals,
+                    env: new_env,
+                    choice_point_id: state.choice_point_id,
+                    cut_parent_id: state.cut_parent_id,
+                });
+                true
+            }
+            _ => {
+                let (name, args) = match decompose_functor_term(&term) {
+                    Some(parts) => parts,
+                    None => return false,
+                };
+                let mut delta = Environment::default();
+                if !unify_helper(
+                    &name_term,
+                    &Term::Atom(name),
+                    &mut delta,
+                ) {
+                    return false;
+                }
+                if !unify_helper(
+                    &arity_term,
+                    &Term::Integer(args.len() as i64),
+                    &mut delta,
+                ) {
+                    return false;
+                }
+                let new_env = compose(&state.env, &delta);
+                self.stack.push(ExecutionState {
+                    goals: state.goals,
+                    env: new_env,
+                    choice_point_id: state.choice_point_id,
+                    cut_parent_id: state.cut_parent_id,
+                });
+                true
+            }
+        }
+    }
+
+    fn handle_arg(&mut self, state: ExecutionState, goal: &Predicate) -> bool {
+        let index = match apply_env(&goal.terms[0], &state.env) {
+            Term::Integer(i) if i > 0 => i as usize,
+            _ => return false,
+        };
+        let structure_term = apply_env(&goal.terms[1], &state.env);
+        let target = apply_env(&goal.terms[2], &state.env);
+        let (_name, args) = match decompose_functor_term(&structure_term) {
+            Some(parts) => parts,
+            None => return false,
+        };
+        if index == 0 || index > args.len() {
+            return false;
+        }
+        let arg_value = apply_env(&args[index - 1], &state.env);
+        let mut delta = Environment::default();
+        if unify_helper(&target, &arg_value, &mut delta) {
+            let new_env = compose(&state.env, &delta);
+            self.stack.push(ExecutionState {
+                goals: state.goals,
+                env: new_env,
+                choice_point_id: state.choice_point_id,
+                cut_parent_id: state.cut_parent_id,
+            });
+            true
+        } else {
+            false
+        }
+    }
+
+    fn handle_univ(&mut self, state: ExecutionState, goal: &Predicate) -> bool {
+        let left = apply_env(&goal.terms[0], &state.env);
+        let right = apply_env(&goal.terms[1], &state.env);
+        match left {
+            Term::Variable(var) => match right {
+                Term::List(mut elements, None) if !elements.is_empty() => {
+                    let functor_name = match elements.remove(0) {
+                        Term::Atom(name) => name,
+                        _ => return false,
+                    };
+                    let term = match build_term_from_name_and_args(&functor_name, &elements) {
+                        Some(term) => term,
+                        None => return false,
+                    };
+                    let mut delta = Environment::default();
+                    delta.bind(var, term);
+                    let new_env = compose(&state.env, &delta);
+                    self.stack.push(ExecutionState {
+                        goals: state.goals,
+                        env: new_env,
+                        choice_point_id: state.choice_point_id,
+                        cut_parent_id: state.cut_parent_id,
+                    });
+                    true
+                }
+                _ => false,
+            },
+            _ => {
+                let (name, args) = match decompose_functor_term(&left) {
+                    Some(parts) => parts,
+                    None => return false,
+                };
+                let list_term = functor_to_list(name, args);
+                let mut delta = Environment::default();
+                if unify_helper(&right, &list_term, &mut delta) {
+                    let new_env = compose(&state.env, &delta);
+                    self.stack.push(ExecutionState {
+                        goals: state.goals,
+                        env: new_env,
+                        choice_point_id: state.choice_point_id,
+                        cut_parent_id: state.cut_parent_id,
+                    });
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
     fn prune_choice_points(&mut self, threshold: usize) {
         self.stack
             .retain(|state| state.choice_point_id <= threshold);
@@ -333,6 +485,12 @@ impl QuerySolver {
         let id = self.next_choice_point_id;
         self.next_choice_point_id += 1;
         id
+    }
+
+    fn fresh_variable(&mut self) -> Term {
+        let name = format!("_G{}", self.fresh_var_counter);
+        self.fresh_var_counter += 1;
+        Term::Variable(name)
     }
 
 }
@@ -855,6 +1013,167 @@ fn test_var_and_nonvar_builtins() {
     };
     let mut solver_nonvar = QuerySolver::new(rules, query_nonvar);
     assert!(solver_nonvar.next().is_some());
+
+    let query_atom = Query {
+        predicates: vec![Predicate {
+            name: "atom".to_string(),
+            terms: vec![Term::Atom("world".to_string())],
+        }],
+    };
+    let mut solver_atom = QuerySolver::new(vec![], query_atom);
+    assert!(solver_atom.next().is_some());
+
+    let query_integer = Query {
+        predicates: vec![Predicate {
+            name: "integer".to_string(),
+            terms: vec![Term::Integer(42)],
+        }],
+    };
+    assert!(QuerySolver::new(vec![], query_integer).next().is_some());
+
+    let query_float = Query {
+        predicates: vec![Predicate {
+            name: "float".to_string(),
+            terms: vec![Term::Float(3.14.into())],
+        }],
+    };
+    assert!(QuerySolver::new(vec![], query_float).next().is_some());
+
+    let query_compound = Query {
+        predicates: vec![Predicate {
+            name: "compound".to_string(),
+            terms: vec![Term::Structure(
+                "foo".to_string(),
+                vec![Term::Integer(1)],
+            )],
+        }],
+    };
+    assert!(QuerySolver::new(vec![], query_compound).next().is_some());
+}
+
+#[test]
+fn test_functor_decompose_and_construct() {
+    let rules = vec![];
+    let query = Query {
+        predicates: vec![Predicate {
+            name: "functor".to_string(),
+            terms: vec![
+                Term::Structure(
+                    "foo".to_string(),
+                    vec![Term::Atom("a".to_string()), Term::Atom("b".to_string())],
+                ),
+                Term::Variable("F".to_string()),
+                Term::Variable("N".to_string()),
+            ],
+        }],
+    };
+    let mut solver = QuerySolver::new(rules, query);
+    let solution = solver.next().unwrap();
+    assert_eq!(
+        apply_env(&Term::Variable("F".to_string()), &solution.env),
+        Term::Atom("foo".to_string())
+    );
+    assert_eq!(
+        apply_env(&Term::Variable("N".to_string()), &solution.env),
+        Term::Integer(2)
+    );
+
+    let construct_query = Query {
+        predicates: vec![Predicate {
+            name: "functor".to_string(),
+            terms: vec![
+                Term::Variable("T".to_string()),
+                Term::Atom("baz".to_string()),
+                Term::Integer(0),
+            ],
+        }],
+    };
+    let mut construct_solver = QuerySolver::new(vec![], construct_query);
+    let constructed = construct_solver.next().unwrap();
+    assert_eq!(
+        apply_env(&Term::Variable("T".to_string()), &constructed.env),
+        Term::Atom("baz".to_string())
+    );
+}
+
+#[test]
+fn test_arg_builtin() {
+    let rules = vec![];
+    let query = Query {
+        predicates: vec![Predicate {
+            name: "arg".to_string(),
+            terms: vec![
+                Term::Integer(2),
+                Term::Structure(
+                    "pair".to_string(),
+                    vec![Term::Atom("a".to_string()), Term::Atom("b".to_string())],
+                ),
+                Term::Variable("X".to_string()),
+            ],
+        }],
+    };
+    let mut solver = QuerySolver::new(rules, query);
+    let solution = solver.next().unwrap();
+    assert_eq!(
+        apply_env(&Term::Variable("X".to_string()), &solution.env),
+        Term::Atom("b".to_string())
+    );
+}
+
+#[test]
+fn test_univ_builtin() {
+    let rules = vec![];
+    let query = Query {
+        predicates: vec![Predicate {
+            name: "=..".to_string(),
+            terms: vec![
+                Term::Structure(
+                    "pair".to_string(),
+                    vec![Term::Atom("a".to_string()), Term::Atom("b".to_string())],
+                ),
+                Term::Variable("L".to_string()),
+            ],
+        }],
+    };
+    let mut solver = QuerySolver::new(rules, query);
+    let solution = solver.next().unwrap();
+    assert_eq!(
+        apply_env(&Term::Variable("L".to_string()), &solution.env),
+        Term::List(
+            vec![
+                Term::Atom("pair".to_string()),
+                Term::Atom("a".to_string()),
+                Term::Atom("b".to_string())
+            ],
+            None
+        )
+    );
+
+    let build_query = Query {
+        predicates: vec![Predicate {
+            name: "=..".to_string(),
+            terms: vec![
+                Term::Variable("T".to_string()),
+                Term::List(
+                    vec![
+                        Term::Atom("pair".to_string()),
+                        Term::Atom("x".to_string()),
+                        Term::Atom("y".to_string()),
+                    ],
+                    None,
+                ),
+            ],
+        }],
+    };
+    let mut build_solver = QuerySolver::new(vec![], build_query);
+    let built = build_solver.next().unwrap();
+    assert_eq!(
+        apply_env(&Term::Variable("T".to_string()), &built.env),
+        Term::Structure(
+            "pair".to_string(),
+            vec![Term::Atom("x".to_string()), Term::Atom("y".to_string())]
+        )
+    );
 }
 
 /// Composes two environments.
@@ -1083,6 +1402,87 @@ fn append_goal_sequence(target: &mut Vec<Predicate>, sequence: Vec<Predicate>) {
     for goal in sequence.into_iter().rev() {
         target.push(goal);
     }
+}
+
+fn normalize_list_term(term: Term) -> Term {
+    match term {
+        Term::Atom(name) if name == "[]" => Term::List(vec![], None),
+        Term::Structure(name, mut args) if name == "." && args.len() == 2 => {
+            let head = args.remove(0);
+            let tail = normalize_list_term(args.remove(0));
+            match tail {
+        Term::List(items, tail_tail) => {
+            let mut new_items = vec![head];
+            new_items.extend(items.into_iter());
+            Term::List(new_items, tail_tail)
+        }
+                other => Term::List(vec![head], Some(Box::new(other))),
+            }
+        }
+        other => other,
+    }
+}
+
+fn build_list_from_cons(head: Term, tail: Term) -> Term {
+    match normalize_list_term(tail) {
+        Term::List(items, tail_tail) => {
+            let mut new_items = vec![head];
+            new_items.extend(items.into_iter());
+            Term::List(new_items, tail_tail)
+        }
+        other => Term::List(vec![head], Some(Box::new(other))),
+    }
+}
+
+fn decompose_functor_term(term: &Term) -> Option<(String, Vec<Term>)> {
+    match term {
+        Term::Structure(name, args) => Some((name.clone(), args.clone())),
+        Term::Atom(name) => Some((name.clone(), vec![])),
+        Term::List(items, tail) => {
+            if items.is_empty() && tail.is_none() {
+                Some(("[]".to_string(), vec![]))
+            } else if let Some(head) = items.first().cloned() {
+                let rest = if items.len() > 1 {
+                    Term::List(items[1..].to_vec(), tail.clone())
+                } else {
+                    tail.as_ref()
+                        .map(|t| *t.clone())
+                        .unwrap_or(Term::List(vec![], None))
+                };
+                Some((".".to_string(), vec![head, rest]))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn build_term_from_name_and_args(name: &str, args: &[Term]) -> Option<Term> {
+    if name == "[]" {
+        if args.is_empty() {
+            Some(Term::List(vec![], None))
+        } else {
+            None
+        }
+    } else if name == "." {
+        if args.len() == 2 {
+            Some(build_list_from_cons(args[0].clone(), args[1].clone()))
+        } else {
+            None
+        }
+    } else if args.is_empty() {
+        Some(Term::Atom(name.to_string()))
+    } else {
+        Some(Term::Structure(name.to_string(), args.to_vec()))
+    }
+}
+
+fn functor_to_list(name: String, args: Vec<Term>) -> Term {
+    let mut elements = Vec::with_capacity(args.len() + 1);
+    elements.push(Term::Atom(name));
+    elements.extend(args);
+    Term::List(elements, None)
 }
 
 #[allow(dead_code)]

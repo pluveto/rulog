@@ -13,3 +13,8 @@ true.
 true.
 false.
 true.
+{F = foo, N = 2}.
+{T = baz}.
+{X = b}.
+{L = [pair, a, b]}.
+{T2 = pair(a, b)}.

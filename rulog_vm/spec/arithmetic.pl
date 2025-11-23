@@ -17,3 +17,8 @@ mix(Z) :- A is 3, Z is A + 0.5.
 ?- integer(42).
 ?- float(3.14).
 ?- compound(foo(1)).
+?- functor(foo(a, b), F, N).
+?- functor(T, baz, 0).
+?- arg(2, pair(a, b), X).
+?- S = pair(a, b), S =.. L.
+?- L = [pair, a, b], T2 =.. L.

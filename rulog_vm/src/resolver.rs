@@ -7,26 +7,35 @@ pub struct QuerySolution {
     pub env: Environment,
 }
 
+#[derive(Clone)]
+struct ExecutionState {
+    goals: Vec<Predicate>,
+    env: Environment,
+    choice_point_id: usize,
+}
+
 pub struct QuerySolver {
     pub query: Query,
     pub clauses: Vec<(Predicate, Vec<Predicate>)>,
-    state: Vec<(Predicate, Environment)>,
-    index: usize,
+    stack: Vec<ExecutionState>,
+    next_choice_point_id: usize,
 }
 
 impl QuerySolver {
     pub fn new(rules: Vec<(Predicate, Vec<Predicate>)>, query: Query) -> QuerySolver {
-        let initial_state = query
-            .predicates
-            .iter()
-            .map(|predicate| (predicate.clone(), Environment::default()))
-            .collect();
+        let mut initial_goals = query.predicates.clone();
+        initial_goals.reverse();
+        let initial_state = ExecutionState {
+            goals: initial_goals,
+            env: Environment::default(),
+            choice_point_id: 0,
+        };
 
         QuerySolver {
             clauses: rules,
             query,
-            index: 0,
-            state: initial_state,
+            stack: vec![initial_state],
+            next_choice_point_id: 1,
         }
     }
 }
@@ -35,22 +44,13 @@ impl Iterator for QuerySolver {
     type Item = QuerySolution;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while !self.state.is_empty() {
-            if self.index >= self.clauses.len() {
-                self.index = 0;
-                self.state.pop();
-                continue;
+        while let Some(mut state) = self.stack.pop() {
+            if state.goals.is_empty() {
+                return Some(QuerySolution { env: state.env });
             }
 
-            let (goal, env) = self.state.last().unwrap().clone();
-            let clause = self.clauses[self.index].clone();
-            self.index += 1;
-
-            if let Some(new_env) = self.try_unify_and_expand(&goal, &env, &clause) {
-                if self.state.last().unwrap().1 == new_env {
-                    self.state.pop();
-                }
-                return Some(QuerySolution { env: new_env });
+            if let Some(goal) = state.goals.pop() {
+                self.expand_goal(state, goal);
             }
         }
 
@@ -59,50 +59,64 @@ impl Iterator for QuerySolver {
 }
 
 impl QuerySolver {
-    fn try_unify_and_expand(
-        &mut self,
-        goal: &Predicate,
-        env: &Environment,
-        clause: &(Predicate, Vec<Predicate>),
-    ) -> Option<Environment> {
-        // Check if the goal can be unified with the head of the clause.
-        if goal.name != clause.0.name {
-            return None;
-        }
+    fn expand_goal(&mut self, state: ExecutionState, goal: Predicate) {
+        let mut new_state_data = Vec::new();
 
-        // Attempt unification of the terms of the goal and the clause.
-        if let Some(new_env) = unify_terms(&goal.terms, &clause.0.terms) {
-            // Compose the new environment with the existing one.
-            let new_env = compose(env, &new_env);
-
-            // If the clause has a body, we need to expand the state with the new sub-goals.
-            if !clause.1.is_empty() {
-                let new_goals = clause.1.iter().map(|predicate| {
-                    (
-                        Predicate {
-                            name: predicate.name.clone(),
-                            terms: apply_env_terms(&predicate.terms, &new_env),
-                        },
-                        new_env.clone(),
-                    )
-                });
-
-                // Extend the state with the new goals in reverse order.
-                self.state.extend(new_goals.rev());
+        for clause in &self.clauses {
+            if goal.name != clause.0.name {
+                continue;
             }
 
-            // If the clause is a fact (no body), or after adding new goals for a rule,
-            // return the new environment.
-            return Some(new_env);
+            if let Some(new_env) = try_unify_and_expand(&goal, &state.env, clause) {
+                let mut next_goals = state.goals.clone();
+                if !clause.1.is_empty() {
+                    for predicate in clause.1.iter().rev() {
+                        next_goals
+                            .push(apply_env_predicate(predicate, &new_env));
+                    }
+                }
+                new_state_data.push((next_goals, new_env));
+            }
         }
 
-        // If goal and clause head match exactly, return the current environment.
-        if goal == &clause.0 {
-            return Some(env.clone());
+        let mut states_with_ids = Vec::new();
+        for (goals, env) in new_state_data {
+            let choice_point_id = self.next_choice_point();
+            states_with_ids.push((choice_point_id, goals, env));
         }
 
-        None
+        for (choice_point_id, goals, env) in states_with_ids.into_iter().rev() {
+            self.stack.push(ExecutionState {
+                goals,
+                env,
+                choice_point_id,
+            });
+        }
     }
+
+    fn next_choice_point(&mut self) -> usize {
+        let id = self.next_choice_point_id;
+        self.next_choice_point_id += 1;
+        id
+    }
+
+}
+
+fn try_unify_and_expand(
+    goal: &Predicate,
+    env: &Environment,
+    clause: &(Predicate, Vec<Predicate>),
+) -> Option<Environment> {
+    if let Some(new_env) = unify_terms(&goal.terms, &clause.0.terms) {
+        let new_env = compose(env, &new_env);
+        return Some(new_env);
+    }
+
+    if goal == &clause.0 {
+        return Some(env.clone());
+    }
+
+    None
 }
 
 #[test]
@@ -356,6 +370,13 @@ fn apply_env_terms(terms: &[Term], env: &Environment) -> Vec<Term> {
     terms.iter().map(|t| apply_env(t, env)).collect()
 }
 
+fn apply_env_predicate(predicate: &Predicate, env: &Environment) -> Predicate {
+    Predicate {
+        name: predicate.name.clone(),
+        terms: apply_env_terms(&predicate.terms, env),
+    }
+}
+
 fn empty_list_term() -> Term {
     Term::List(vec![], None)
 }
@@ -389,6 +410,7 @@ fn unify_helper(term1: &Term, term2: &Term, env: &mut Environment) -> bool {
         (Term::Integer(i1), Term::Integer(i2)) if i1 == i2 => true,
         (Term::Float(f1), Term::Float(f2)) if f1 == f2 => true,
         (Term::String(s1), Term::String(s2)) if s1 == s2 => true,
+        (Term::Variable(v1), Term::Variable(v2)) if v1 == v2 => true,
         // if one of the terms is a variable, bind it to the other term
         (Term::Variable(v), t) | (t, Term::Variable(v)) => {
             // if the variable is already bound, unify the bound term with the other term

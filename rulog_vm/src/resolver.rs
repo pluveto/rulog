@@ -60,6 +60,10 @@ impl Iterator for QuerySolver {
 
 impl QuerySolver {
     fn expand_goal(&mut self, state: ExecutionState, goal: Predicate) {
+        if self.handle_builtin(state.clone(), &goal) {
+            return;
+        }
+
         let mut new_state_data = Vec::new();
 
         for clause in &self.clauses {
@@ -92,6 +96,27 @@ impl QuerySolver {
                 choice_point_id,
             });
         }
+    }
+
+    fn handle_builtin(&mut self, state: ExecutionState, goal: &Predicate) -> bool {
+        match goal.name.as_str() {
+            "!" if goal.terms.is_empty() => {
+                self.prune_choice_points(state.choice_point_id);
+                self.stack.push(state);
+                true
+            }
+            "fail" if goal.terms.is_empty() => true,
+            "true" if goal.terms.is_empty() => {
+                self.stack.push(state);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn prune_choice_points(&mut self, threshold: usize) {
+        self.stack
+            .retain(|state| state.choice_point_id <= threshold);
     }
 
     fn next_choice_point(&mut self) -> usize {
@@ -171,6 +196,80 @@ fn test_query_solver_no_var_true() {
         })
     );
     assert_eq!(query_solver.next(), None);
+}
+
+#[test]
+fn test_cut_prunes_choice_points() {
+    /*
+        f(a).
+        f(b).
+        g(X) :- f(X), !.
+        ?- g(X). % expect X = a only
+    */
+    let rules = vec![
+        (
+            Predicate {
+                name: "f".to_string(),
+                terms: vec![Term::Atom("a".to_string())],
+            },
+            vec![],
+        ),
+        (
+            Predicate {
+                name: "f".to_string(),
+                terms: vec![Term::Atom("b".to_string())],
+            },
+            vec![],
+        ),
+        (
+            Predicate {
+                name: "g".to_string(),
+                terms: vec![Term::Variable("X".to_string())],
+            },
+            vec![
+                Predicate {
+                    name: "f".to_string(),
+                    terms: vec![Term::Variable("X".to_string())],
+                },
+                Predicate {
+                    name: "!".to_string(),
+                    terms: vec![],
+                },
+            ],
+        ),
+    ];
+    let query = Query {
+        predicates: vec![Predicate {
+            name: "g".to_string(),
+            terms: vec![Term::Variable("X".to_string())],
+        }],
+    };
+
+    let mut solver = QuerySolver::new(rules, query);
+    let solution = solver.next();
+    assert_eq!(
+        solution,
+        Some(QuerySolution {
+            env: [("X".to_string(), Term::Atom("a".to_string()))]
+                .iter()
+                .cloned()
+                .collect()
+        })
+    );
+    assert_eq!(solver.next(), None);
+}
+
+#[test]
+fn test_fail_builtin() {
+    let rules = vec![];
+    let query = Query {
+        predicates: vec![Predicate {
+            name: "fail".to_string(),
+            terms: vec![],
+        }],
+    };
+    let mut solver = QuerySolver::new(rules, query);
+    assert_eq!(solver.next(), None);
 }
 
 #[test]
